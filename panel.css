@@ -60,8 +60,11 @@ button, input { font: inherit; }
 .filter:focus, .preview-search:focus, .preview-sort:focus { border-color: color-mix(in srgb, var(--accent) 70%, CanvasText 15%); }
 button {
   border-radius: 6px;
+  padding: 3px 6px 4px 4px !important;
+  font-size: 12px !important;
   border: 1px solid var(--border);
   background: ButtonFace; color: ButtonText; cursor: pointer; white-space: nowrap;
+  title { display: none; }
 }
 button:hover:not(:disabled) { background: var(--hover); }
 button:active:not(:disabled) { transform: translateY(1px); }

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "API Copy - Request & Response",
   "version": "0.1.0",
-  "description": "DevTools API request panel with unified icon buttons, keyboard navigation, copy shortcuts, hover copy actions, business-failure highlighting, query filtering, searchable JSON Preview, compact value-copy actions, token copy, and resizable adaptive panels.",
+  "description": "Inspect API requests in DevTools, search JSON responses, and copy paths, parameters, request data, responses, or tokens.",
   "devtools_page": "devtools.html",
   "icons": {
     "16": "icon16.png",

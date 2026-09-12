@@ -26,7 +26,7 @@ API Copy does **not**:
 - Store analytics or tracking identifiers
 - Sell or share user data
 
-The extension stores only local UI preferences such as ignored query-parameter names and panel sizing in browser local storage.
+The extension stores only local UI preferences such as ignored query-parameter names, excluded request paths, and panel sizing in browser local storage.
 
 ## Sensitive data
 
