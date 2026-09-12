@@ -9,6 +9,7 @@ Its goal is simple: reduce repetitive work in the Network panel when copying URL
 ## Features
 
 - Shows XHR / Fetch requests only.
+- Automatically follows Chrome's UI language, with English and Simplified Chinese included.
 - Fast copy actions:
   - **Copy Path**: copies only the API path.
   - **Copy Path + Params**: includes Query parameters; requests with a Body also include the Body.
@@ -120,6 +121,9 @@ api-copy-devtools/
 ├── panel.html
 ├── panel.css
 ├── panel.js
+├── _locales/
+│   ├── en/messages.json
+│   └── zh_CN/messages.json
 ├── icon16.png
 ├── icon48.png
 ├── icon128.png

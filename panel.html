@@ -13,34 +13,34 @@
         <div class="toolbar-left">
           <div class="panel-title"><span class="panel-mark" aria-hidden="true">A</span><span>API Copy</span></div>
           <div class="filter-wrap">
-            <input id="filterInput" class="filter" type="text" placeholder="过滤请求路径、方法或状态" />
-            <button id="filterClearBtn" class="filter-clear" type="button" title="清空请求筛选" aria-label="清空请求筛选" hidden>
+            <input id="filterInput" class="filter" type="text" placeholder="过滤请求路径、方法或状态" data-i18n-placeholder="requestFilterPlaceholder" />
+            <button id="filterClearBtn" class="filter-clear" type="button" title="清空请求筛选" aria-label="清空请求筛选" data-i18n-title="clearRequestFilter" data-i18n-aria-label="clearRequestFilter" hidden>
               <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
             </button>
           </div>
         </div>
         <div class="toolbar-utility">
-          <button id="paramFilterBtn" class="ghost utility-action" title="配置 Query 参数和接口排除规则"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M14 5v4M4 17h2M10 17h10M6 15v4M4 12h5M13 12h7M9 10v4" /></svg><span>过滤设置</span></button>
-          <button id="helpBtn" class="ghost help-btn utility-action" title="查看快捷键和操作说明" aria-haspopup="dialog"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.8 9a2.4 2.4 0 1 1 3.5 2.1c-.9.5-1.3 1.1-1.3 2M12 17h.01" /></svg><span>帮助</span></button>
+          <button id="paramFilterBtn" class="ghost utility-action" title="配置 Query 参数和接口排除规则" data-i18n-title="filterSettingsTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M14 5v4M4 17h2M10 17h10M6 15v4M4 12h5M13 12h7M9 10v4" /></svg><span data-i18n="filterSettings">过滤设置</span></button>
+          <button id="helpBtn" class="ghost help-btn utility-action" title="查看快捷键和操作说明" data-i18n-title="helpButtonTitle" aria-haspopup="dialog"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.8 9a2.4 2.4 0 1 1 3.5 2.1c-.9.5-1.3 1.1-1.3 2M12 17h.01" /></svg><span data-i18n="help">帮助</span></button>
         </div>
       </div>
       <div class="toolbar-actions">
-        <span class="action-group-label">复制所选请求</span>
-        <div class="button-group copy-actions" aria-label="复制操作">
-          <button id="copyPathBtn" class="copy-action action-path" disabled title="复制接口路径">
-            <span class="action-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 5.7 0l2.3-2.3A4 4 0 0 0 12.3 5L11 6.3M14 11a4 4 0 0 0-5.7 0L6 13.3A4 4 0 0 0 11.7 19l1.3-1.3" /></svg></span><span>复制路径</span>
+        <span class="action-group-label" data-i18n="copySelectedRequest">复制所选请求</span>
+        <div class="button-group copy-actions" aria-label="复制操作" data-i18n-aria-label="copyActions">
+          <button id="copyPathBtn" class="copy-action action-path" disabled title="复制接口路径" data-i18n-title="copyPath">
+            <span class="action-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 5.7 0l2.3-2.3A4 4 0 0 0 12.3 5L11 6.3M14 11a4 4 0 0 0-5.7 0L6 13.3A4 4 0 0 0 11.7 19l1.3-1.3" /></svg></span><span data-i18n="copyPath">复制路径</span>
           </button>
-          <button id="copyPathQueryBtn" class="copy-action action-query" disabled title="复制路径、Query 参数；POST 等请求同时包含 Body。快捷键：C">
-            <span class="action-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 5.7 0l2.3-2.3A4 4 0 0 0 12.3 5L11 6.3M14 11a4 4 0 0 0-5.7 0L6 13.3A4 4 0 0 0 11.7 19l1.3-1.3M19 16v6M16 19h6" /></svg></span><span>复制路径+参数</span>
+          <button id="copyPathQueryBtn" class="copy-action action-query" disabled title="复制路径、Query 参数；POST 等请求同时包含 Body。快捷键：C" data-i18n-title="copyPathWithParamsTitle">
+            <span class="action-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 5.7 0l2.3-2.3A4 4 0 0 0 12.3 5L11 6.3M14 11a4 4 0 0 0-5.7 0L6 13.3A4 4 0 0 0 11.7 19l1.3-1.3M19 16v6M16 19h6" /></svg></span><span data-i18n="copyPathWithParams">复制路径+参数</span>
           </button>
-          <button id="copySimpleBtn" class="copy-action action-simple" disabled title="复制精简请求和响应。快捷键：Cmd/Ctrl + C">
-            <span class="action-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h3" /></svg></span><span>复制精简请求</span>
+          <button id="copySimpleBtn" class="copy-action action-simple" disabled title="复制精简请求和响应。快捷键：Cmd/Ctrl + C" data-i18n-title="copySimpleRequestTitle">
+            <span class="action-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h3" /></svg></span><span data-i18n="copySimpleRequest">复制精简请求</span>
           </button>
-          <button id="copyFullBtn" class="copy-action action-full" disabled title="复制完整请求和响应">
-            <span class="action-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M8 4H4v4M16 4h4v4M8 20H4v-4M16 20h4v-4M9 9h6M9 12h6M9 15h6" /></svg></span><span>复制完整请求</span>
+          <button id="copyFullBtn" class="copy-action action-full" disabled title="复制完整请求和响应" data-i18n-title="copyFullRequestTitle">
+            <span class="action-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M8 4H4v4M16 4h4v4M8 20H4v-4M16 20h4v-4M9 9h6M9 12h6M9 15h6" /></svg></span><span data-i18n="copyFullRequest">复制完整请求</span>
           </button>
-          <button id="copyTokenBtn" class="copy-action action-token" disabled title="复制 Authorization / Token">
-            <span class="action-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24"><circle cx="8" cy="12" r="4" /><path d="M12 12h8M17 12v3M20 12v2" /></svg></span><span>复制 Token</span>
+          <button id="copyTokenBtn" class="copy-action action-token" disabled title="复制 Authorization / Token" data-i18n-title="copyToken">
+            <span class="action-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24"><circle cx="8" cy="12" r="4" /><path d="M12 12h8M17 12v3M20 12v2" /></svg></span><span data-i18n="copyToken">复制 Token</span>
           </button>
         </div>
       </div>
@@ -49,55 +49,55 @@
     <div id="paramFilterPanel" class="param-filter-panel" hidden>
       <div class="filter-settings-content">
         <div class="filter-setting-row">
-          <div class="param-filter-label">过滤 Query 参数</div>
-          <input id="ignoredParamsInput" class="filter-setting-input" type="text" placeholder="例如：_t,timestamp,nonce" autocomplete="off" />
-          <div class="param-filter-help">多个参数名用逗号分隔，展示和复制时都会移除。默认过滤 <code>_t</code>。</div>
+          <div class="param-filter-label" data-i18n="queryFilterLabel">过滤 Query 参数</div>
+          <input id="ignoredParamsInput" class="filter-setting-input" type="text" placeholder="例如：_t,timestamp,nonce" data-i18n-placeholder="queryFilterPlaceholder" autocomplete="off" />
+          <div class="param-filter-help"><span data-i18n="queryFilterHelpBefore">多个参数名用逗号分隔，展示和复制时都会移除。默认过滤</span> <code>_t</code><span data-i18n="period">。</span></div>
         </div>
         <div class="filter-setting-row">
-          <div class="param-filter-label">排除接口</div>
-          <input id="ignoredPathsInput" class="filter-setting-input" type="text" placeholder="例如：/analytics/report,/health" autocomplete="off" />
-          <div class="param-filter-help">多个路径用逗号分隔，按 URL 路径精确匹配，不受 Query 参数影响。</div>
+          <div class="param-filter-label" data-i18n="excludeEndpoints">排除接口</div>
+          <input id="ignoredPathsInput" class="filter-setting-input" type="text" placeholder="例如：/analytics/report,/health" data-i18n-placeholder="excludeEndpointsPlaceholder" autocomplete="off" />
+          <div class="param-filter-help" data-i18n="excludeEndpointsHelp">多个路径用逗号分隔，按 URL 路径精确匹配，不受 Query 参数影响。</div>
         </div>
       </div>
-      <button id="resetIgnoredParamsBtn" class="ghost compact utility-action" title="恢复默认过滤设置"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8v5h5M5.5 17a8 8 0 1 0 .2-10.2L4 8" /></svg><span>恢复默认</span></button>
+      <button id="resetIgnoredParamsBtn" class="ghost compact utility-action" title="恢复默认过滤设置" data-i18n-title="resetFiltersTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8v5h5M5.5 17a8 8 0 1 0 .2-10.2L4 8" /></svg><span data-i18n="resetDefaults">恢复默认</span></button>
     </div>
 
     <main id="content" class="content">
       <section id="listPane" class="list-pane">
         <div class="list-header">
           <div class="list-header-actions">
-            <span>接口请求</span>
-            <button id="clearBtn" class="ghost compact utility-action danger-action list-clear-btn" title="清空全部请求记录"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg><span>清空记录</span></button>
+            <span data-i18n="apiRequests">接口请求</span>
+            <button id="clearBtn" class="ghost compact utility-action danger-action list-clear-btn" title="清空全部请求记录" data-i18n-title="clearRecordsTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg><span data-i18n="clearRecords">清空记录</span></button>
           </div>
           <span id="countText" class="count-badge">0 条</span>
         </div>
         <div class="list-columns" aria-hidden="true">
-          <span>方法</span><span>状态</span><span>路径</span>
+          <span data-i18n="method">方法</span><span data-i18n="status">状态</span><span data-i18n="path">路径</span>
         </div>
-        <div id="requestList" class="request-list" tabindex="0" aria-label="接口请求列表"></div>
+        <div id="requestList" class="request-list" tabindex="0" aria-label="接口请求列表" data-i18n-aria-label="requestList"></div>
       </section>
 
-      <div id="splitter" class="splitter" title="拖拽调整面板尺寸" aria-label="拖拽调整面板尺寸"></div>
+      <div id="splitter" class="splitter" title="拖拽调整面板尺寸" aria-label="拖拽调整面板尺寸" data-i18n-title="resizePanels" data-i18n-aria-label="resizePanels"></div>
 
       <section class="detail-pane">
         <div class="detail-header">
           <div class="detail-heading">
             <strong>Preview</strong>
-            <div id="detailMeta" class="meta">请选择一个请求</div>
+            <div id="detailMeta" class="meta" data-i18n="selectRequest">请选择一个请求</div>
           </div>
           <div class="detail-tools">
-            <button id="previewSortBtn" class="preview-sort" type="button" aria-label="按字母排序" aria-pressed="true" title="当前：按字母排序；点击切换为原始 JSON 顺序">
+            <button id="previewSortBtn" class="preview-sort" type="button" aria-label="按字母排序" aria-pressed="true" title="当前：按字母排序；点击切换为原始 JSON 顺序" data-i18n-aria-label="sortAlphabetically" data-i18n-title="sortAlphabeticallyTitle">
               <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M6 4v16M3.5 17.5 6 20l2.5-2.5M12 6h8M12 12h6M12 18h4" />
               </svg>
               <span class="sort-label">A–Z</span>
             </button>
-            <input id="previewSearchInput" class="preview-search" type="search" placeholder="搜索响应字段 / 值" autocomplete="off" />
+            <input id="previewSearchInput" class="preview-search" type="search" placeholder="搜索响应字段 / 值" data-i18n-placeholder="previewSearchPlaceholder" autocomplete="off" />
             <span id="copyStatus" class="copy-status"></span>
           </div>
         </div>
         <div id="previewContent" class="preview-content">
-          <div class="preview-placeholder">打开页面并触发接口后，这里只显示接口返回内容。</div>
+          <div class="preview-placeholder" data-i18n="previewPlaceholder">打开页面并触发接口后，这里只显示接口返回内容。</div>
         </div>
       </section>
     </main>
@@ -107,19 +107,19 @@
     <section class="help-dialog" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
       <div class="help-header">
         <div>
-          <strong id="helpTitle">快捷键与操作</strong>
-          <div class="help-subtitle">在未编辑输入框、且没有文字选区时生效</div>
+          <strong id="helpTitle" data-i18n="shortcutsTitle">快捷键与操作</strong>
+          <div class="help-subtitle" data-i18n="shortcutsSubtitle">在未编辑输入框、且没有文字选区时生效</div>
         </div>
-        <button id="helpCloseBtn" class="icon-close" aria-label="关闭帮助"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
+        <button id="helpCloseBtn" class="icon-close" aria-label="关闭帮助" data-i18n-aria-label="closeHelp"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
       </div>
       <div class="shortcut-list">
-        <div class="shortcut-row"><kbd>↑</kbd><kbd>↓</kbd><span>在接口列表中上下切换选中请求</span></div>
-        <div class="shortcut-row"><kbd>C</kbd><span>复制“路径 + 参数”；POST / PUT / PATCH / DELETE 会同时带 Body</span></div>
-        <div class="shortcut-row"><kbd>⌘ C</kbd><span class="shortcut-or">或</span><kbd>Ctrl C</kbd><span>复制精简请求 + 响应</span></div>
-        <div class="shortcut-row"><span class="mouse-hint">鼠标框选</span><span>可以直接选择接口列表中的任意文字，再用系统复制命令复制选区</span></div>
-        <div class="shortcut-row"><span class="mouse-hint">鼠标悬浮</span><span>接口行右侧出现 3 个高频快捷按钮：路径、路径+参数、精简请求</span></div>
+        <div class="shortcut-row"><kbd>↑</kbd><kbd>↓</kbd><span data-i18n="shortcutNavigate">在接口列表中上下切换选中请求</span></div>
+        <div class="shortcut-row"><kbd>C</kbd><span data-i18n="shortcutPathParams">复制“路径 + 参数”；POST / PUT / PATCH / DELETE 会同时带 Body</span></div>
+        <div class="shortcut-row"><kbd>⌘ C</kbd><span class="shortcut-or" data-i18n="or">或</span><kbd>Ctrl C</kbd><span data-i18n="shortcutSimpleRequest">复制精简请求 + 响应</span></div>
+        <div class="shortcut-row"><span class="mouse-hint" data-i18n="mouseSelect">鼠标框选</span><span data-i18n="mouseSelectHelp">可以直接选择接口列表中的任意文字，再用系统复制命令复制选区</span></div>
+        <div class="shortcut-row"><span class="mouse-hint" data-i18n="mouseHover">鼠标悬浮</span><span data-i18n="mouseHoverHelp">接口行右侧出现 3 个高频快捷按钮：路径、路径+参数、精简请求</span></div>
       </div>
-      <div class="help-note">提示：搜索框、Query 参数配置框或 Preview 搜索框获得焦点时，字母快捷键不会触发。</div>
+      <div class="help-note" data-i18n="helpNote">提示：搜索框、Query 参数配置框或 Preview 搜索框获得焦点时，字母快捷键不会触发。</div>
     </section>
   </div>
 

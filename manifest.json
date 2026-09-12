@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "API Copy - Request & Response",
+  "default_locale": "zh_CN",
+  "name": "__MSG_extensionName__",
   "version": "0.1.0",
-  "description": "Inspect API requests in DevTools, search JSON responses, and copy paths, parameters, request data, responses, or tokens.",
+  "description": "__MSG_extensionDescription__",
   "devtools_page": "devtools.html",
   "icons": {
     "16": "icon16.png",

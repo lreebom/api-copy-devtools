@@ -9,6 +9,7 @@ API Copy 是一个面向前后端联调场景的 Chrome DevTools 扩展，用来
 ## 功能
 
 - 只展示 XHR / Fetch 请求。
+- 界面自动跟随 Chrome 语言，内置简体中文和英文。
 - 快速复制：
   - **复制路径**：只复制接口路径。
   - **复制路径 + 参数**：包含 Query；有 Body 的请求会同时带 Body。
@@ -120,6 +121,9 @@ api-copy-devtools/
 ├── panel.html
 ├── panel.css
 ├── panel.js
+├── _locales/
+│   ├── en/messages.json
+│   └── zh_CN/messages.json
 ├── icon16.png
 ├── icon48.png
 ├── icon128.png

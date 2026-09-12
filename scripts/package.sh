@@ -19,6 +19,7 @@ zip -q -r "$OUT" \
   manifest.json \
   devtools.html devtools.js \
   panel.html panel.css panel.js \
-  icon16.png icon48.png icon128.png
+  icon16.png icon48.png icon128.png \
+  _locales
 
 echo "$OUT"

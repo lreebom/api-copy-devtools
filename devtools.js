@@ -1,5 +1,5 @@
 chrome.devtools.panels.create(
-  'API Copy',
+  chrome.i18n.getMessage('panelTitle') || 'API Copy',
   'icon16.png',
   'panel.html'
 );

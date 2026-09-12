@@ -6,6 +6,85 @@ const DEFAULT_IGNORED_URL_PATHS = ['/jsfulldatasave-be/savedatasfromjs'];
 const IGNORED_PARAMS_STORAGE_KEY = 'apiCopyIgnoredQueryParams';
 const IGNORED_PATHS_STORAGE_KEY = 'apiCopyIgnoredUrlPaths';
 
+// WebStorm 普通网页预览无法调用 chrome.i18n，动态文案使用中文作为本地回退。
+const I18N_FALLBACKS = {
+  businessResponseFailed: '业务返回失败',
+  base64DecodeFailed: '[响应内容为 Base64，解码失败]',
+  contentTruncated: '[内容过大，仅保留前 $1 个字符]',
+  loadingResponse: '[正在读取响应内容…]',
+  noReadableResponse: '[无可读取的响应正文]',
+  unsupportedResponse: '[当前请求不支持读取响应正文]',
+  noApiRecords: '暂无接口记录',
+  none: '(无)',
+  currentRequestExcluded: '当前请求已被排除。',
+  selectRequest: '请选择一个请求',
+  requestCount: '$1 条',
+  requestCountWithFailures: '$1 条 · $2 业务失败',
+  noMatchingRequests: '暂无匹配请求',
+  businessFailure: '业务失败',
+  businessFailureWithReason: '业务失败：$1',
+  copyPath: '复制路径',
+  copyPathWithParams: '复制路径+参数',
+  copySimpleRequest: '复制精简请求',
+  expand: '展开',
+  collapse: '收起',
+  expandFullValue: '展开完整字段值',
+  collapseFullValue: '收起完整字段值',
+  toggleFieldValue: '$1字段 $2 的完整值',
+  copy: '复制',
+  copyFullFieldValue: '复制完整字段值',
+  copyFieldValue: '复制字段 $1 的值',
+  doubleClickToggle: '双击展开 / 收起',
+  longTextAria: '长文本，双击展开或收起',
+  emptyResponse: '(无返回内容)',
+  noMatchingJson: '没有匹配的响应字段或值',
+  noMatchingResponse: '没有匹配的响应内容',
+  businessFailureMeta: '业务失败',
+  businessFailureMetaWithReason: '业务失败 ($1)',
+  copied: '已复制',
+  sortAlphabetically: '按字母排序',
+  sortOriginal: '按原始 JSON 排序',
+  sortAlphabeticallyTitle: '当前：按字母排序；点击切换为原始 JSON 顺序',
+  sortOriginalTitle: '当前：原始 JSON 顺序；点击切换为按字母排序',
+  originalOrderShort: '原序',
+  clearedPlaceholder: '已清空。重新触发接口后会继续记录。',
+  previewData: '模拟数据',
+};
+
+function t(key, substitutions = []) {
+  const values = Array.isArray(substitutions) ? substitutions.map(String) : [String(substitutions)];
+  const i18n = globalThis.chrome?.i18n;
+  const message = values.length ? i18n?.getMessage?.(key, values) : i18n?.getMessage?.(key);
+  if (message) return message;
+
+  return (I18N_FALLBACKS[key] || key).replace(/\$(\d+)/g, (_, index) => values[Number(index) - 1] ?? '');
+}
+
+// 静态 HTML 通过 data-i18n 属性映射消息，避免在脚本中维护重复的节点清单。
+function localizeDocument() {
+  const getMessage = globalThis.chrome?.i18n?.getMessage;
+  if (!getMessage) return;
+
+  const language = globalThis.chrome.i18n.getUILanguage?.();
+  if (language) document.documentElement.lang = language;
+
+  const mappings = [
+    ['data-i18n', 'textContent'],
+    ['data-i18n-title', 'title'],
+    ['data-i18n-placeholder', 'placeholder'],
+    ['data-i18n-aria-label', 'aria-label'],
+  ];
+
+  for (const [attribute, property] of mappings) {
+    for (const element of document.querySelectorAll(`[${attribute}]`)) {
+      const message = getMessage.call(globalThis.chrome.i18n, element.getAttribute(attribute));
+      if (message) element[property] = message;
+    }
+  }
+}
+
+localizeDocument();
+
 function loadIgnoredQueryParams() {
   try {
     const saved = JSON.parse(localStorage.getItem(IGNORED_PARAMS_STORAGE_KEY) || 'null');
@@ -136,7 +215,7 @@ function evaluateBusinessResult(body) {
 
   if (!checks.length) return { state: 'unknown', reason: '' };
   if (checks.some(item => item === false)) {
-    return { state: 'failure', reason: reasons.join(' · ') || '业务返回失败' };
+    return { state: 'failure', reason: reasons.join(' · ') || t('businessResponseFailed') };
   }
   return { state: 'success', reason: '' };
 }
@@ -150,14 +229,14 @@ function decodeContent(content, encoding) {
     const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
     return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   } catch {
-    return '[响应内容为 Base64，解码失败]';
+    return t('base64DecodeFailed');
   }
 }
 
 function truncate(text) {
   if (!text) return '';
   if (text.length <= MAX_CONTENT_CHARS) return text;
-  return `${text.slice(0, MAX_CONTENT_CHARS)}\n\n[内容过大，仅保留前 ${MAX_CONTENT_CHARS.toLocaleString()} 个字符]`;
+  return `${text.slice(0, MAX_CONTENT_CHARS)}\n\n${t('contentTruncated', MAX_CONTENT_CHARS.toLocaleString())}`;
 }
 
 function addRequest(request) {
@@ -183,7 +262,7 @@ function addRequest(request) {
     resourceType: normalizeResourceType(request),
     time: request.time ?? null,
     startedDateTime: request.startedDateTime || '',
-    responseBody: '[正在读取响应内容…]',
+    responseBody: t('loadingResponse'),
     responseEncoding: '',
     businessState: 'pending',
     businessReason: '',
@@ -201,14 +280,14 @@ function addRequest(request) {
     request.getContent((content, encoding) => {
       record.responseEncoding = encoding || '';
       record.responseBody = truncate(decodeContent(content || '', encoding));
-      if (!content) record.responseBody = '[无可读取的响应正文]';
+      if (!content) record.responseBody = t('noReadableResponse');
       const business = evaluateBusinessResult(record.responseBody);
       record.businessState = business.state;
       record.businessReason = business.reason;
       render();
     });
   } else {
-    record.responseBody = '[当前请求不支持读取响应正文]';
+    record.responseBody = t('unsupportedResponse');
     record.businessState = 'unknown';
     record.businessReason = '';
     render();
@@ -257,7 +336,7 @@ function getRequestBody(record) {
 }
 
 function formatRecord(record) {
-  if (!record) return '暂无接口记录';
+  if (!record) return t('noApiRecords');
 
   const requestHeaders = headersToObject(record.requestHeaders);
   const responseHeaders = headersToObject(record.responseHeaders);
@@ -275,13 +354,13 @@ function formatRecord(record) {
     record.method,
     '',
     'Query Parameters:',
-    Object.keys(query).length ? JSON.stringify(query, null, 2) : '(无)',
+    Object.keys(query).length ? JSON.stringify(query, null, 2) : t('none'),
     '',
     'Request Headers:',
     JSON.stringify(requestHeaders, null, 2),
     '',
     'Request Body:',
-    requestBody || '(无)',
+    requestBody || t('none'),
     '',
     '================ RESPONSE ===============',
     '',
@@ -292,7 +371,7 @@ function formatRecord(record) {
     JSON.stringify(responseHeaders, null, 2),
     '',
     'Response:',
-    responseBody || '(无)',
+    responseBody || t('none'),
   ].join('\n');
 }
 
@@ -342,9 +421,13 @@ function setIgnoredUrlPathsFromInput(value) {
   const selected = getSelectedRecord();
   if (selected && isIgnoredRequestUrl(selected.url)) {
     state.selectedId = null;
-    el.detailMeta.textContent = '请选择一个请求';
+    el.detailMeta.textContent = t('selectRequest');
     el.detailMeta.classList.remove('business-failed-meta');
-    el.previewContent.innerHTML = '<div class="preview-placeholder">当前请求已被排除。</div>';
+    el.previewContent.innerHTML = '';
+    const placeholder = document.createElement('div');
+    placeholder.className = 'preview-placeholder';
+    placeholder.textContent = t('currentRequestExcluded');
+    el.previewContent.appendChild(placeholder);
   }
   render();
 }
@@ -465,7 +548,7 @@ function formatPathWithParams(record) {
 }
 
 function formatRecordSimple(record) {
-  if (!record) return '暂无接口记录';
+  if (!record) return t('noApiRecords');
 
   const requestBody = getRequestBody(record);
   const responseBody = tryPretty(record.responseBody, record.mimeType);
@@ -480,7 +563,7 @@ function formatRecordSimple(record) {
     record.method,
     '',
     'Request Body:',
-    requestBody || '(无)',
+    requestBody || t('none'),
     '',
     '================ RESPONSE ===============',
     '',
@@ -488,7 +571,7 @@ function formatRecordSimple(record) {
     `${record.status}${record.statusText ? ` ${record.statusText}` : ''}`,
     '',
     'Response:',
-    responseBody || '(无)',
+    responseBody || t('none'),
   ].join('\n');
 }
 
@@ -508,7 +591,7 @@ function filteredRecords() {
     if (!isApiRequest(record)) return false;
     if (isIgnoredRequestUrl(record.url)) return false;
     if (!keyword) return true;
-    const businessText = record.businessState === 'failure' ? `业务失败 ${record.businessReason || ''}` : '';
+    const businessText = record.businessState === 'failure' ? `${t('businessFailure')} ${record.businessReason || ''}` : '';
     return `${record.method} ${record.status} ${getDisplayUrl(record.url)} ${businessText}`.toLowerCase().includes(keyword);
   });
 }
@@ -567,11 +650,15 @@ function render() {
   const displayRecords = [...records].reverse();
   const businessFailureCount = records.filter(record => record.businessState === 'failure').length;
   el.countText.textContent = businessFailureCount
-    ? `${records.length} 条 · ${businessFailureCount} 业务失败`
-    : `${records.length} 条`;
+    ? t('requestCountWithFailures', [records.length, businessFailureCount])
+    : t('requestCount', records.length);
 
   if (records.length === 0) {
-    el.requestList.innerHTML = '<div class="empty">暂无匹配请求</div>';
+    el.requestList.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = t('noMatchingRequests');
+    el.requestList.appendChild(empty);
   } else {
     el.requestList.innerHTML = '';
     for (const record of displayRecords) {
@@ -579,7 +666,7 @@ function render() {
       const isBusinessFailure = record.businessState === 'failure';
       row.className = `request-row${record.id === state.selectedId ? ' selected' : ''}${isBusinessFailure ? ' business-failed' : ''}`;
       row.title = isBusinessFailure
-        ? `${getDisplayUrl(record.url)}\n业务失败${record.businessReason ? `：${record.businessReason}` : ''}`
+        ? `${getDisplayUrl(record.url)}\n${record.businessReason ? t('businessFailureWithReason', record.businessReason) : t('businessFailure')}`
         : getDisplayUrl(record.url);
 
       const method = document.createElement('span');
@@ -601,17 +688,17 @@ function render() {
       if (isBusinessFailure) {
         const badge = document.createElement('span');
         badge.className = 'business-fail-badge';
-        badge.textContent = '业务失败';
-        badge.title = record.businessReason || '业务返回失败';
+        badge.textContent = t('businessFailure');
+        badge.title = record.businessReason || t('businessResponseFailed');
         urlCell.appendChild(badge);
       }
 
       const rowActions = document.createElement('span');
       rowActions.className = 'row-copy-actions';
       rowActions.append(
-        createRowCopyButton('path', '复制路径', () => copyText(getSimplePath(record.url, false))),
-        createRowCopyButton('query', '复制路径+参数', () => copyText(formatPathWithParams(record))),
-        createRowCopyButton('simple', '复制精简请求', () => copyText(formatRecordSimple(record))),
+        createRowCopyButton('path', t('copyPath'), () => copyText(getSimplePath(record.url, false))),
+        createRowCopyButton('query', t('copyPathWithParams'), () => copyText(formatPathWithParams(record))),
+        createRowCopyButton('simple', t('copySimpleRequest'), () => copyText(formatRecordSimple(record))),
       );
 
       row.append(method, status, urlCell, rowActions);
@@ -735,7 +822,7 @@ function createFieldActions(key, value, longValueEl = null) {
     expandBtn.className = 'json-copy-btn json-expand-btn';
     const expandIcon = createSvgIcon(['M7 9l5 5 5-5']);
     const expandLabel = document.createElement('span');
-    expandLabel.textContent = '展开';
+    expandLabel.textContent = t('expand');
     expandBtn.append(expandIcon, expandLabel);
 
     // 按钮和双击共用状态更新，确保图标、文案与文本展示始终一致。
@@ -743,9 +830,10 @@ function createFieldActions(key, value, longValueEl = null) {
       longValueEl.classList.toggle('expanded', expanded);
       longValueEl.parentElement?.classList.toggle('long-value-expanded', expanded);
       expandIcon.querySelector('path').setAttribute('d', expanded ? 'M7 15l5-5 5 5' : 'M7 9l5 5 5-5');
-      expandLabel.textContent = expanded ? '收起' : '展开';
-      expandBtn.title = expanded ? '收起完整字段值' : '展开完整字段值';
-      expandBtn.setAttribute('aria-label', `${expanded ? '收起' : '展开'}字段 ${String(key)} 的完整值`);
+      const action = expanded ? t('collapse') : t('expand');
+      expandLabel.textContent = action;
+      expandBtn.title = expanded ? t('collapseFullValue') : t('expandFullValue');
+      expandBtn.setAttribute('aria-label', t('toggleFieldValue', [action, String(key)]));
       expandBtn.setAttribute('aria-expanded', String(expanded));
     };
 
@@ -768,10 +856,10 @@ function createFieldActions(key, value, longValueEl = null) {
   const copyIcon = createSvgIcon(['M9 9h10v10H9zM5 15H4V5h10v1']);
   copyIcon.classList.add('json-copy-icon');
   const copyLabel = document.createElement('span');
-  copyLabel.textContent = '复制';
+  copyLabel.textContent = t('copy');
   copyValueBtn.append(copyIcon, copyLabel);
-  copyValueBtn.title = '复制完整字段值';
-  copyValueBtn.setAttribute('aria-label', `复制字段 ${String(key)} 的值`);
+  copyValueBtn.title = t('copyFullFieldValue');
+  copyValueBtn.setAttribute('aria-label', t('copyFieldValue', String(key)));
 
   copyValueBtn.addEventListener('pointerdown', stopToggle);
   copyValueBtn.addEventListener('click', event => {
@@ -806,8 +894,8 @@ function appendPrimitive(parent, value, key = null, query = '') {
   if (typeof value === 'string' && rawValueText.length > 80) {
     line.classList.add('json-long-line');
     valueEl.classList.add('json-long-value');
-    valueEl.title = `${rawValueText}\n\n双击展开 / 收起`;
-    valueEl.setAttribute('aria-label', '长文本，双击展开或收起');
+    valueEl.title = `${rawValueText}\n\n${t('doubleClickToggle')}`;
+    valueEl.setAttribute('aria-label', t('longTextAria'));
   }
 
   line.appendChild(valueEl);
@@ -916,10 +1004,11 @@ function renderPreview(record) {
   const trimmed = typeof raw === 'string' ? raw.trim() : '';
   const query = el.previewSearchInput.value.trim().toLowerCase();
 
-  if (!trimmed || raw.startsWith('[正在读取') || raw.startsWith('[无可读取') || raw.startsWith('[当前请求')) {
+  const placeholderResponses = new Set([t('loadingResponse'), t('noReadableResponse'), t('unsupportedResponse')]);
+  if (!trimmed || placeholderResponses.has(raw)) {
     const placeholder = document.createElement('div');
     placeholder.className = 'preview-placeholder';
-    placeholder.textContent = raw || '(无返回内容)';
+    placeholder.textContent = raw || t('emptyResponse');
     el.previewContent.appendChild(placeholder);
     return;
   }
@@ -930,7 +1019,7 @@ function renderPreview(record) {
       if (query && !nodeMatches(data, null, query)) {
         const placeholder = document.createElement('div');
         placeholder.className = 'preview-placeholder';
-        placeholder.textContent = '没有匹配的响应字段或值';
+        placeholder.textContent = t('noMatchingJson');
         el.previewContent.appendChild(placeholder);
         return;
       }
@@ -939,11 +1028,11 @@ function renderPreview(record) {
     } catch {}
   }
 
-  const rawText = pretty || '(无返回内容)';
+  const rawText = pretty || t('emptyResponse');
   if (query && !rawText.toLowerCase().includes(query)) {
     const placeholder = document.createElement('div');
     placeholder.className = 'preview-placeholder';
-    placeholder.textContent = '没有匹配的响应内容';
+    placeholder.textContent = t('noMatchingResponse');
     el.previewContent.appendChild(placeholder);
     return;
   }
@@ -964,7 +1053,7 @@ function renderDetail() {
   if (!record) return;
 
   const businessMeta = record.businessState === 'failure'
-    ? ` · 业务失败${record.businessReason ? ` (${record.businessReason})` : ''}`
+    ? ` · ${record.businessReason ? t('businessFailureMetaWithReason', record.businessReason) : t('businessFailureMeta')}`
     : '';
   el.detailMeta.textContent = `${record.status}${record.statusText ? ` ${record.statusText}` : ''}${record.mimeType ? ` · ${record.mimeType}` : ''}${record.time != null ? ` · ${Math.round(record.time)} ms` : ''}${businessMeta}`;
   el.detailMeta.classList.toggle('business-failed-meta', record.businessState === 'failure');
@@ -985,7 +1074,7 @@ async function copyText(text) {
     textarea.remove();
   }
 
-  el.copyStatus.textContent = '已复制';
+  el.copyStatus.textContent = t('copied');
   clearTimeout(copyText.timer);
   copyText.timer = setTimeout(() => { el.copyStatus.textContent = ''; }, 1200);
 }
@@ -1008,11 +1097,11 @@ el.previewSortBtn.addEventListener('click', () => {
   const alphabetical = state.previewSortOrder !== 'alphabetical';
   state.previewSortOrder = alphabetical ? 'alphabetical' : 'original';
   el.previewSortBtn.setAttribute('aria-pressed', String(alphabetical));
-  el.previewSortBtn.setAttribute('aria-label', alphabetical ? '按字母排序' : '按原始 JSON 排序');
-  el.previewSortBtn.querySelector('.sort-label').textContent = alphabetical ? 'A–Z' : '原序';
+  el.previewSortBtn.setAttribute('aria-label', alphabetical ? t('sortAlphabetically') : t('sortOriginal'));
+  el.previewSortBtn.querySelector('.sort-label').textContent = alphabetical ? 'A–Z' : t('originalOrderShort');
   el.previewSortBtn.title = alphabetical
-    ? '当前：按字母排序；点击切换为原始 JSON 顺序'
-    : '当前：原始 JSON 顺序；点击切换为按字母排序';
+    ? t('sortAlphabeticallyTitle')
+    : t('sortOriginalTitle');
   renderDetail();
 });
 
@@ -1077,9 +1166,13 @@ el.resetIgnoredParamsBtn.addEventListener('click', () => {
   const selected = getSelectedRecord();
   if (selected && isIgnoredRequestUrl(selected.url)) {
     state.selectedId = null;
-    el.detailMeta.textContent = '请选择一个请求';
+    el.detailMeta.textContent = t('selectRequest');
     el.detailMeta.classList.remove('business-failed-meta');
-    el.previewContent.innerHTML = '<div class="preview-placeholder">当前请求已被排除。</div>';
+    el.previewContent.innerHTML = '';
+    const placeholder = document.createElement('div');
+    placeholder.className = 'preview-placeholder';
+    placeholder.textContent = t('currentRequestExcluded');
+    el.previewContent.appendChild(placeholder);
   }
   render();
 });
@@ -1087,10 +1180,14 @@ el.resetIgnoredParamsBtn.addEventListener('click', () => {
 el.clearBtn.addEventListener('click', () => {
   state.records = [];
   state.selectedId = null;
-  el.detailMeta.textContent = '请选择一个请求';
+  el.detailMeta.textContent = t('selectRequest');
   el.detailMeta.classList.remove('business-failed-meta');
   el.previewSearchInput.value = '';
-  el.previewContent.innerHTML = '<div class="preview-placeholder">已清空。重新触发接口后会继续记录。</div>';
+  el.previewContent.innerHTML = '';
+  const placeholder = document.createElement('div');
+  placeholder.className = 'preview-placeholder';
+  placeholder.textContent = t('clearedPlaceholder');
+  el.previewContent.appendChild(placeholder);
   el.copyTokenBtn.disabled = true;
   render();
 });
@@ -1296,7 +1393,7 @@ if (globalThis.chrome?.devtools?.network) {
   // 明确标记网页预览，避免把样例误认为实际抓取的接口。
   const previewBadge = document.createElement('span');
   previewBadge.className = 'count-badge';
-  previewBadge.textContent = '模拟数据';
+  previewBadge.textContent = t('previewData');
   document.querySelector('.panel-title').appendChild(previewBadge);
   loadPreviewRequests();
 }

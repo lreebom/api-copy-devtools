@@ -16,3 +16,4 @@ Initial public release.
 - Added searchable, sortable JSON Preview with compact long-value handling.
 - Added resizable adaptive request/response panels.
 - Added unified icons for common actions.
+- Added English and Simplified Chinese interfaces that follow Chrome's UI language.
