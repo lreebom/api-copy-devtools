@@ -28,7 +28,7 @@ API Copy 是一个面向前后端联调场景的 Chrome DevTools 扩展，用来
   - 展开 / 收起对象与数组
   - 一键复制字段值
   - 长字符串自动收缩，可通过字段按钮或双击展开 / 收起
-- 请求列表与 Preview 面板可拖拽调整尺寸，并记住布局。
+- 支持自动、左右和上下三种面板布局，并分别记住布局模式和拖拽尺寸。
 
 ## 安装开发版
 
@@ -153,7 +153,7 @@ api-copy-devtools/
 会生成：
 
 ```text
-dist/api-copy-devtools-v0.1.0.zip
+dist/api-copy-devtools-v0.2.0.zip
 ```
 
 ZIP 根目录直接包含 `manifest.json`，后续可用于 Chrome Web Store 上传。

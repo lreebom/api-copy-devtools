@@ -5,6 +5,7 @@ const DEFAULT_IGNORED_QUERY_PARAMS = ['_t'];
 const DEFAULT_IGNORED_URL_PATHS = ['/jsfulldatasave-be/savedatasfromjs'];
 const IGNORED_PARAMS_STORAGE_KEY = 'apiCopyIgnoredQueryParams';
 const IGNORED_PATHS_STORAGE_KEY = 'apiCopyIgnoredUrlPaths';
+const LAYOUT_MODE_STORAGE_KEY = 'apiCopyLayoutMode';
 
 // WebStorm 普通网页预览无法调用 chrome.i18n，动态文案使用中文作为本地回退。
 const I18N_FALLBACKS = {
@@ -101,6 +102,11 @@ function loadIgnoredUrlPaths() {
   return [...DEFAULT_IGNORED_URL_PATHS];
 }
 
+function loadLayoutMode() {
+  const saved = localStorage.getItem(LAYOUT_MODE_STORAGE_KEY);
+  return ['auto', 'horizontal', 'vertical'].includes(saved) ? saved : 'auto';
+}
+
 const state = {
   records: [],
   selectedId: null,
@@ -110,6 +116,8 @@ const state = {
   ignoredUrlPaths: loadIgnoredUrlPaths(),
   // Preview 默认按字母排列字段，切换请求时保留当前排序方式。
   previewSortOrder: 'alphabetical',
+  // 自动模式响应面板宽度，手动模式固定用户选择的布局方向。
+  layoutMode: loadLayoutMode(),
 };
 
 const el = {
@@ -136,6 +144,7 @@ const el = {
   content: document.querySelector('#content'),
   listPane: document.querySelector('#listPane'),
   splitter: document.querySelector('#splitter'),
+  layoutModeButtons: [...document.querySelectorAll('[data-layout-mode]')],
   copyStatus: document.querySelector('#copyStatus'),
   helpBtn: document.querySelector('#helpBtn'),
   helpOverlay: document.querySelector('#helpOverlay'),
@@ -677,6 +686,10 @@ function render() {
       status.className = `status ${record.status >= 200 && record.status < 400 ? 'ok' : 'bad'}`;
       status.textContent = String(record.status || '-');
 
+      const requestMeta = document.createElement('span');
+      requestMeta.className = 'request-meta';
+      requestMeta.append(method, status);
+
       const urlCell = document.createElement('span');
       urlCell.className = 'url-cell';
 
@@ -701,7 +714,7 @@ function render() {
         createRowCopyButton('simple', t('copySimpleRequest'), () => copyText(formatRecordSimple(record))),
       );
 
-      row.append(method, status, urlCell, rowActions);
+      row.append(requestMeta, urlCell, rowActions);
       row.addEventListener('click', () => {
         // 鼠标拖拽框选列表文字时，不要因为 click 重新渲染而破坏选区。
         if (hasTextSelection()) return;
@@ -1249,7 +1262,24 @@ function clamp(value, min, max) {
 }
 
 function isStackedLayout() {
-  return window.matchMedia(`(max-width: ${STACK_BREAKPOINT}px)`).matches;
+  return el.content.dataset.layout === 'vertical';
+}
+
+const layoutBreakpoint = window.matchMedia(`(max-width: ${STACK_BREAKPOINT}px)`);
+
+// 将用户选项解析为实际方向，自动模式在面板跨过断点时即时更新。
+function setLayoutMode(mode, shouldPersist = true) {
+  const validMode = ['auto', 'horizontal', 'vertical'].includes(mode) ? mode : 'auto';
+  state.layoutMode = validMode;
+  el.content.dataset.layout = validMode === 'auto'
+    ? (layoutBreakpoint.matches ? 'vertical' : 'horizontal')
+    : validMode;
+
+  for (const button of el.layoutModeButtons) {
+    button.setAttribute('aria-pressed', String(button.dataset.layoutMode === validMode));
+  }
+
+  if (shouldPersist) localStorage.setItem(LAYOUT_MODE_STORAGE_KEY, validMode);
 }
 
 function setListWidth(px) {
@@ -1281,6 +1311,16 @@ const savedHeight = Number(localStorage.getItem('apiCopyListHeight'));
 if (Number.isFinite(savedHeight) && savedHeight > 0) {
   document.documentElement.style.setProperty('--list-height', `${savedHeight}px`);
 }
+
+setLayoutMode(state.layoutMode, false);
+
+for (const button of el.layoutModeButtons) {
+  button.addEventListener('click', () => setLayoutMode(button.dataset.layoutMode));
+}
+
+layoutBreakpoint.addEventListener('change', () => {
+  if (state.layoutMode === 'auto') setLayoutMode('auto', false);
+});
 
 el.splitter.addEventListener('pointerdown', event => {
   event.preventDefault();

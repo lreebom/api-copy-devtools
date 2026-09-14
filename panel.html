@@ -62,17 +62,18 @@
       <button id="resetIgnoredParamsBtn" class="ghost compact utility-action" title="恢复默认过滤设置" data-i18n-title="resetFiltersTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8v5h5M5.5 17a8 8 0 1 0 .2-10.2L4 8" /></svg><span data-i18n="resetDefaults">恢复默认</span></button>
     </div>
 
-    <main id="content" class="content">
+    <main id="content" class="content" data-layout="horizontal">
       <section id="listPane" class="list-pane">
         <div class="list-header">
           <div class="list-header-actions">
-            <span data-i18n="apiRequests">接口请求</span>
+            <span data-i18n="apiRequests">请求</span>
             <button id="clearBtn" class="ghost compact utility-action danger-action list-clear-btn" title="清空全部请求记录" data-i18n-title="clearRecordsTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg><span data-i18n="clearRecords">清空记录</span></button>
           </div>
           <span id="countText" class="count-badge">0 条</span>
         </div>
         <div class="list-columns" aria-hidden="true">
-          <span data-i18n="method">方法</span><span data-i18n="status">状态</span><span data-i18n="path">路径</span>
+          <span data-i18n="status">状态</span>
+          <span data-i18n="path">路径</span>
         </div>
         <div id="requestList" class="request-list" tabindex="0" aria-label="接口请求列表" data-i18n-aria-label="requestList"></div>
       </section>
@@ -86,6 +87,17 @@
             <div id="detailMeta" class="meta" data-i18n="selectRequest">请选择一个请求</div>
           </div>
           <div class="detail-tools">
+            <div class="layout-switch" role="group" aria-label="面板布局" data-i18n-aria-label="layoutModes">
+              <button class="layout-mode-btn" type="button" data-layout-mode="auto" aria-pressed="true" aria-label="自动布局" title="自动布局：根据面板宽度切换" data-i18n-aria-label="layoutAuto" data-i18n-title="layoutAutoTitle">
+                <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5" /><path d="M8 9h3v6H8zM14 9h2M14 12h2M14 15h2" /></svg>
+              </button>
+              <button class="layout-mode-btn" type="button" data-layout-mode="horizontal" aria-pressed="false" aria-label="左右布局" title="固定为左右布局" data-i18n-aria-label="layoutHorizontal" data-i18n-title="layoutHorizontalTitle">
+                <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5" /><path d="M11 5v14" /></svg>
+              </button>
+              <button class="layout-mode-btn" type="button" data-layout-mode="vertical" aria-pressed="false" aria-label="上下布局" title="固定为上下布局" data-i18n-aria-label="layoutVertical" data-i18n-title="layoutVerticalTitle">
+                <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="1.5" /><path d="M4 11.5h16" /></svg>
+              </button>
+            </div>
             <button id="previewSortBtn" class="preview-sort" type="button" aria-label="按字母排序" aria-pressed="true" title="当前：按字母排序；点击切换为原始 JSON 顺序" data-i18n-aria-label="sortAlphabetically" data-i18n-title="sortAlphabeticallyTitle">
               <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M6 4v16M3.5 17.5 6 20l2.5-2.5M12 6h8M12 12h6M12 18h4" />

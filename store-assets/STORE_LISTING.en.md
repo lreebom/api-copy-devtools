@@ -22,7 +22,7 @@ Key features:
 - Expand long text and copy complete field values
 - Highlight common business-level failures
 - Filter Query parameters and exclude analytics or tracking endpoints
-- Resize the request list and Preview panels with an adaptive layout
+- Switch between automatic, side-by-side, and stacked layouts, with draggable panel sizing
 - Use keyboard shortcuts for frequent operations
 - Follow Chrome's UI language with English and Simplified Chinese interfaces
 

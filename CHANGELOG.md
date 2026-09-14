@@ -4,6 +4,11 @@
 
 All notable changes to API Copy are documented here.
 
+## 0.2.0 - 2026-09-14
+
+- Added automatic, side-by-side, and stacked layout controls with remembered selection.
+- Stacked request method and status in one compact column, simplified the splitter to one line, and allowed Preview values to use the available row width.
+
 ## 0.1.0 - 2026-09-12
 
 Initial public release.

@@ -28,7 +28,7 @@ Its goal is simple: reduce repetitive work in the Network panel when copying URL
   - Expands / collapses objects and arrays
   - Copies field values with one click
   - Collapses long strings and supports expand / collapse through a field action or double-click
-- Resizable request-list and Preview panels with remembered layout.
+- Automatic, side-by-side, and stacked panel layouts, with remembered mode and draggable sizing.
 
 ## Install for Development
 
@@ -153,7 +153,7 @@ Run:
 Output:
 
 ```text
-dist/api-copy-devtools-v0.1.0.zip
+dist/api-copy-devtools-v0.2.0.zip
 ```
 
 The ZIP root contains `manifest.json` directly and can be uploaded to the Chrome Web Store.
