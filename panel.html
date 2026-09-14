@@ -20,7 +20,7 @@
           </div>
         </div>
         <div class="toolbar-utility">
-          <button id="paramFilterBtn" class="ghost utility-action" title="配置 Query 参数和接口排除规则" data-i18n-title="filterSettingsTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M14 5v4M4 17h2M10 17h10M6 15v4M4 12h5M13 12h7M9 10v4" /></svg><span data-i18n="filterSettings">过滤设置</span></button>
+          <button id="paramFilterBtn" class="ghost utility-action" title="配置请求过滤和路径显示规则" data-i18n-title="filterSettingsTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M14 5v4M4 17h2M10 17h10M6 15v4M4 12h5M13 12h7M9 10v4" /></svg><span data-i18n="filterSettings">过滤设置</span></button>
           <button id="helpBtn" class="ghost help-btn utility-action" title="查看快捷键和操作说明" data-i18n-title="helpButtonTitle" aria-haspopup="dialog"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.8 9a2.4 2.4 0 1 1 3.5 2.1c-.9.5-1.3 1.1-1.3 2M12 17h.01" /></svg><span data-i18n="help">帮助</span></button>
         </div>
       </div>
@@ -58,24 +58,43 @@
           <input id="ignoredPathsInput" class="filter-setting-input" type="text" placeholder="例如：/analytics/report,/health" data-i18n-placeholder="excludeEndpointsPlaceholder" autocomplete="off" />
           <div class="param-filter-help" data-i18n="excludeEndpointsHelp">多个路径用逗号分隔，按 URL 路径精确匹配，不受 Query 参数影响。</div>
         </div>
+        <div class="filter-setting-row">
+          <div class="param-filter-label" data-i18n="pathPrefixSegments">全局路径前缀截断</div>
+          <input id="pathPrefixSegmentsInput" class="filter-setting-input path-prefix-input" type="number" min="0" max="50" step="1" value="3" data-i18n-aria-label="pathPrefixSegments" />
+          <div class="param-filter-help" data-i18n="pathPrefixSegmentsHelp">对所有请求统一生效，按路径段数量隐藏前缀；复制仍使用原路径。默认截断 3 段。</div>
+        </div>
       </div>
       <button id="resetIgnoredParamsBtn" class="ghost compact utility-action" title="恢复默认过滤设置" data-i18n-title="resetFiltersTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8v5h5M5.5 17a8 8 0 1 0 .2-10.2L4 8" /></svg><span data-i18n="resetDefaults">恢复默认</span></button>
     </div>
 
     <main id="content" class="content" data-layout="horizontal">
       <section id="listPane" class="list-pane">
-        <div class="list-header">
-          <div class="list-header-actions">
-            <span data-i18n="apiRequests">请求</span>
-            <button id="clearBtn" class="ghost compact utility-action danger-action list-clear-btn" title="清空全部请求记录" data-i18n-title="clearRecordsTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg><span data-i18n="clearRecords">清空记录</span></button>
+        <div class="request-list-section">
+          <div class="list-header">
+            <div class="list-header-actions">
+              <span data-i18n="apiRequests">请求</span>
+              <button id="clearBtn" class="ghost compact utility-action danger-action list-clear-btn" title="清空全部请求记录" data-i18n-title="clearRecordsTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" /></svg><span data-i18n="clearRecords">清空记录</span></button>
+            </div>
+            <span id="countText" class="count-badge">0 条</span>
           </div>
-          <span id="countText" class="count-badge">0 条</span>
+          <div class="list-columns" aria-hidden="true">
+            <span data-i18n="status">状态</span>
+            <span data-i18n="path">路径</span>
+          </div>
+          <div id="requestList" class="request-list" tabindex="0" aria-label="接口请求列表" data-i18n-aria-label="requestList"></div>
         </div>
-        <div class="list-columns" aria-hidden="true">
-          <span data-i18n="status">状态</span>
-          <span data-i18n="path">路径</span>
-        </div>
-        <div id="requestList" class="request-list" tabindex="0" aria-label="接口请求列表" data-i18n-aria-label="requestList"></div>
+
+        <div id="requestParamsSplitter" class="request-params-splitter" title="拖拽调整请求列表和参数区域尺寸" aria-label="拖拽调整请求列表和参数区域尺寸" data-i18n-title="resizeRequestPanels" data-i18n-aria-label="resizeRequestPanels"></div>
+
+        <section class="request-params-pane" aria-labelledby="requestParamsTitle">
+          <div class="request-params-header">
+            <strong id="requestParamsTitle" data-i18n="requestParameters">请求参数</strong>
+            <span id="requestParamsMeta" class="request-params-meta"></span>
+          </div>
+          <div id="requestParamsContent" class="request-params-content">
+            <div class="preview-placeholder" data-i18n="selectRequestForParams">选择一条请求后查看 Query 和 Body 参数。</div>
+          </div>
+        </section>
       </section>
 
       <div id="splitter" class="splitter" title="拖拽调整面板尺寸" aria-label="拖拽调整面板尺寸" data-i18n-title="resizePanels" data-i18n-aria-label="resizePanels"></div>

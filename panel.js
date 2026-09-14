@@ -3,9 +3,12 @@ const MAX_CONTENT_CHARS = 2_000_000;
 const STACK_BREAKPOINT = 1100;
 const DEFAULT_IGNORED_QUERY_PARAMS = ['_t'];
 const DEFAULT_IGNORED_URL_PATHS = ['/jsfulldatasave-be/savedatasfromjs'];
+const DEFAULT_PATH_PREFIX_SEGMENTS = 3;
 const IGNORED_PARAMS_STORAGE_KEY = 'apiCopyIgnoredQueryParams';
 const IGNORED_PATHS_STORAGE_KEY = 'apiCopyIgnoredUrlPaths';
+const PATH_PREFIX_SEGMENTS_STORAGE_KEY = 'apiCopyPathPrefixSegments';
 const LAYOUT_MODE_STORAGE_KEY = 'apiCopyLayoutMode';
+const REQUEST_LIST_SIZE_STORAGE_KEY = 'apiCopyRequestListSize';
 
 // WebStorm 普通网页预览无法调用 chrome.i18n，动态文案使用中文作为本地回退。
 const I18N_FALLBACKS = {
@@ -48,6 +51,16 @@ const I18N_FALLBACKS = {
   sortAlphabeticallyTitle: '当前：按字母排序；点击切换为原始 JSON 顺序',
   sortOriginalTitle: '当前：原始 JSON 顺序；点击切换为按字母排序',
   originalOrderShort: '原序',
+  requestParameters: '请求参数',
+  selectRequestForParams: '选择一条请求后查看 Query 和 Body 参数。',
+  queryParameters: 'Query 参数',
+  requestBody: '请求 Body',
+  noQueryParameters: '无 Query 参数',
+  noRequestBody: '无请求 Body',
+  parameterSummary: 'Query $1 项 · Body $2',
+  bodyPresent: '有',
+  bodyAbsent: '无',
+  pageReloadedPlaceholder: '页面已刷新，正在记录新请求。',
   clearedPlaceholder: '已清空。重新触发接口后会继续记录。',
   previewData: '模拟数据',
 };
@@ -107,6 +120,13 @@ function loadLayoutMode() {
   return ['auto', 'horizontal', 'vertical'].includes(saved) ? saved : 'auto';
 }
 
+function loadPathPrefixSegments() {
+  const raw = localStorage.getItem(PATH_PREFIX_SEGMENTS_STORAGE_KEY);
+  if (raw === null) return DEFAULT_PATH_PREFIX_SEGMENTS;
+  const saved = Number(raw);
+  return Number.isInteger(saved) && saved >= 0 && saved <= 50 ? saved : DEFAULT_PATH_PREFIX_SEGMENTS;
+}
+
 const state = {
   records: [],
   selectedId: null,
@@ -114,6 +134,8 @@ const state = {
   ignoredQueryParams: loadIgnoredQueryParams(),
   // 埋点、统计等非业务请求按 URL 路径排除。
   ignoredUrlPaths: loadIgnoredUrlPaths(),
+  // 请求列表隐藏统一网关前缀，复制时仍使用真实路径。
+  pathPrefixSegments: loadPathPrefixSegments(),
   // Preview 默认按字母排列字段，切换请求时保留当前排序方式。
   previewSortOrder: 'alphabetical',
   // 自动模式响应面板宽度，手动模式固定用户选择的布局方向。
@@ -132,9 +154,13 @@ const el = {
   paramFilterPanel: document.querySelector('#paramFilterPanel'),
   ignoredParamsInput: document.querySelector('#ignoredParamsInput'),
   ignoredPathsInput: document.querySelector('#ignoredPathsInput'),
+  pathPrefixSegmentsInput: document.querySelector('#pathPrefixSegmentsInput'),
   resetIgnoredParamsBtn: document.querySelector('#resetIgnoredParamsBtn'),
   clearBtn: document.querySelector('#clearBtn'),
   requestList: document.querySelector('#requestList'),
+  requestParamsSplitter: document.querySelector('#requestParamsSplitter'),
+  requestParamsContent: document.querySelector('#requestParamsContent'),
+  requestParamsMeta: document.querySelector('#requestParamsMeta'),
   countText: document.querySelector('#countText'),
   detailMeta: document.querySelector('#detailMeta'),
   previewContent: document.querySelector('#previewContent'),
@@ -252,7 +278,7 @@ function addRequest(request) {
   if (!request?.request?.url) return;
   if (isIgnoredRequestUrl(request.request.url)) return;
 
-  // 避免 getHAR + onRequestFinished 对同一条产生明显重复。
+  // 使用请求特征去重，避免 DevTools 重复回调导致列表重复。
   const signature = `${request.startedDateTime || ''}|${request.request.method}|${request.request.url}|${request.time || ''}`;
   if (state.records.some(item => item.signature === signature)) return;
 
@@ -342,6 +368,23 @@ function getRequestBody(record) {
     return JSON.stringify(obj, null, 2);
   }
   return '';
+}
+
+// 请求参数面板优先按 JSON 展示，表单参数转为键值对象，其他正文保留原文。
+function getRequestBodyValue(record) {
+  const postData = record?.postData;
+  if (!postData) return null;
+
+  if (postData.text) {
+    const text = postData.text.trim();
+    if (!text) return null;
+    try { return JSON.parse(text); } catch { return postData.text; }
+  }
+
+  if (Array.isArray(postData.params) && postData.params.length) {
+    return Object.fromEntries(postData.params.map(param => [param.name, param.value ?? '']));
+  }
+  return null;
 }
 
 function formatRecord(record) {
@@ -438,6 +481,15 @@ function setIgnoredUrlPathsFromInput(value) {
     placeholder.textContent = t('currentRequestExcluded');
     el.previewContent.appendChild(placeholder);
   }
+  render();
+}
+
+function setPathPrefixSegments(value) {
+  const count = Math.min(Math.max(Math.trunc(Number(value)), 0), 50);
+  if (!Number.isFinite(count)) return;
+  state.pathPrefixSegments = count;
+  el.pathPrefixSegmentsInput.value = String(count);
+  localStorage.setItem(PATH_PREFIX_SEGMENTS_STORAGE_KEY, String(count));
   render();
 }
 
@@ -588,10 +640,23 @@ function getDisplayUrl(rawUrl) {
   const filteredUrl = filterUrlQuery(rawUrl);
   try {
     const url = new URL(filteredUrl);
-    return `${url.pathname || '/'}${url.search || ''}`;
+    return `${trimDisplayPath(url.pathname || '/')}${url.search || ''}`;
   } catch {
-    return String(filteredUrl || '');
+    const value = String(filteredUrl || '');
+    const suffixIndex = value.search(/[?#]/);
+    const pathname = suffixIndex >= 0 ? value.slice(0, suffixIndex) : value;
+    const suffix = suffixIndex >= 0 ? value.slice(suffixIndex) : '';
+    return `${trimDisplayPath(pathname)}${suffix}`;
   }
+}
+
+function trimDisplayPath(pathname) {
+  const segments = String(pathname || '').split('/').filter(Boolean);
+  const count = state.pathPrefixSegments;
+  if (!count || !segments.length) return pathname || '/';
+  // 从第一段开始截断，短路径至少保留最后一段接口名。
+  const removeCount = Math.min(count, segments.length - 1);
+  return `/${segments.slice(removeCount).join('/')}`;
 }
 
 function filteredRecords() {
@@ -605,8 +670,13 @@ function filteredRecords() {
   });
 }
 
-function visibleRecordsInDisplayOrder() {
-  return [...filteredRecords()].reverse();
+function recordsInDisplayOrder(records = filteredRecords()) {
+  return [...records].sort((a, b) => {
+    const aTime = Date.parse(a.startedDateTime);
+    const bTime = Date.parse(b.startedDateTime);
+    if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) return aTime - bTime;
+    return a.id - b.id;
+  });
 }
 
 function hasTextSelection() {
@@ -656,7 +726,8 @@ function createRowCopyButton(kind, title, onCopy) {
 
 function render() {
   const records = filteredRecords();
-  const displayRecords = [...records].reverse();
+  // 按请求发起时间从早到晚展示；缺少时间时使用采集顺序兜底。
+  const displayRecords = recordsInDisplayOrder(records);
   const businessFailureCount = records.filter(record => record.businessState === 'failure').length;
   el.countText.textContent = businessFailureCount
     ? t('requestCountWithFailures', [records.length, businessFailureCount])
@@ -747,7 +818,7 @@ function scrollSelectedRowIntoView() {
 }
 
 function moveSelection(delta) {
-  const records = visibleRecordsInDisplayOrder();
+  const records = recordsInDisplayOrder();
   if (!records.length) return;
 
   let index = records.findIndex(record => record.id === state.selectedId);
@@ -1010,6 +1081,99 @@ function appendHighlightedRaw(parent, text, query) {
   if (cursor < text.length) parent.appendChild(document.createTextNode(text.slice(cursor)));
 }
 
+function appendRequestParamSection(title, value, emptyText, count = null) {
+  const section = document.createElement('section');
+  section.className = 'request-param-section';
+
+  const heading = document.createElement('div');
+  heading.className = 'request-param-title';
+  heading.textContent = title;
+  if (count !== null) {
+    const badge = document.createElement('span');
+    badge.className = 'request-param-count';
+    badge.textContent = String(count);
+    heading.appendChild(badge);
+  }
+  section.appendChild(heading);
+
+  if (value === null) {
+    const empty = document.createElement('div');
+    empty.className = 'request-param-empty';
+    empty.textContent = emptyText;
+    section.appendChild(empty);
+  } else if (typeof value === 'string') {
+    const raw = document.createElement('pre');
+    raw.className = 'request-param-raw';
+    raw.textContent = value;
+    section.appendChild(raw);
+  } else {
+    section.appendChild(buildJsonNode(value));
+  }
+
+  el.requestParamsContent.appendChild(section);
+}
+
+function appendQueryParameters(queryItems) {
+  const section = document.createElement('section');
+  section.className = 'request-param-section';
+
+  const heading = document.createElement('div');
+  heading.className = 'request-param-title';
+  heading.textContent = t('queryParameters');
+  const badge = document.createElement('span');
+  badge.className = 'request-param-count';
+  badge.textContent = String(queryItems.length);
+  heading.appendChild(badge);
+  section.appendChild(heading);
+
+  if (!queryItems.length) {
+    const empty = document.createElement('div');
+    empty.className = 'request-param-empty';
+    empty.textContent = t('noQueryParameters');
+    section.appendChild(empty);
+  } else {
+    const list = document.createElement('div');
+    list.className = 'request-query-list';
+    for (const item of queryItems) {
+      const row = document.createElement('div');
+      row.className = 'request-query-row';
+      const key = document.createElement('span');
+      key.className = 'request-query-key';
+      key.textContent = item.name || '';
+      const value = document.createElement('span');
+      value.className = 'request-query-value';
+      value.textContent = item.value ?? '';
+      row.append(key, value);
+      list.appendChild(row);
+    }
+    section.appendChild(list);
+  }
+
+  el.requestParamsContent.appendChild(section);
+}
+
+// 同时展示 URL Query 与请求 Body，让选中接口的请求和响应无需切换即可核对。
+function renderRequestParameters(record) {
+  el.requestParamsContent.innerHTML = '';
+  el.requestParamsMeta.textContent = '';
+  if (!record) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'preview-placeholder';
+    placeholder.textContent = t('selectRequestForParams');
+    el.requestParamsContent.appendChild(placeholder);
+    return;
+  }
+
+  const queryItems = filteredQueryItems(record);
+  const body = getRequestBodyValue(record);
+  el.requestParamsMeta.textContent = t('parameterSummary', [
+    queryItems.length,
+    body === null ? t('bodyAbsent') : t('bodyPresent'),
+  ]);
+  appendQueryParameters(queryItems);
+  appendRequestParamSection(t('requestBody'), body, t('noRequestBody'));
+}
+
 function renderPreview(record) {
   el.previewContent.innerHTML = '';
   const raw = record.responseBody || '';
@@ -1063,6 +1227,7 @@ function renderDetail() {
   el.copyPathBtn.disabled = !record;
   el.copyPathQueryBtn.disabled = !record;
   el.copyTokenBtn.disabled = !record || !getTokenFromRecord(record);
+  renderRequestParameters(record);
   if (!record) return;
 
   const businessMeta = record.businessState === 'failure'
@@ -1146,6 +1311,7 @@ el.copyTokenBtn.addEventListener('click', () => {
 
 el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
 el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
+el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
 el.paramFilterBtn.setAttribute('aria-expanded', 'false');
 
 el.paramFilterBtn.addEventListener('click', () => {
@@ -1155,6 +1321,7 @@ el.paramFilterBtn.addEventListener('click', () => {
   if (willShow) {
     el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
     el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
+    el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
     el.ignoredParamsInput.focus();
     el.ignoredParamsInput.select();
   }
@@ -1168,13 +1335,25 @@ el.ignoredPathsInput.addEventListener('input', event => {
   setIgnoredUrlPathsFromInput(event.target.value);
 });
 
+el.pathPrefixSegmentsInput.addEventListener('input', event => {
+  if (event.target.value === '') return;
+  setPathPrefixSegments(event.target.value);
+});
+
+el.pathPrefixSegmentsInput.addEventListener('blur', event => {
+  if (event.target.value === '') event.target.value = String(state.pathPrefixSegments);
+});
+
 el.resetIgnoredParamsBtn.addEventListener('click', () => {
   state.ignoredQueryParams = [...DEFAULT_IGNORED_QUERY_PARAMS];
   state.ignoredUrlPaths = [...DEFAULT_IGNORED_URL_PATHS];
+  state.pathPrefixSegments = DEFAULT_PATH_PREFIX_SEGMENTS;
   localStorage.setItem(IGNORED_PARAMS_STORAGE_KEY, JSON.stringify(state.ignoredQueryParams));
   localStorage.setItem(IGNORED_PATHS_STORAGE_KEY, JSON.stringify(state.ignoredUrlPaths));
+  localStorage.setItem(PATH_PREFIX_SEGMENTS_STORAGE_KEY, String(state.pathPrefixSegments));
   el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
   el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
+  el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
 
   const selected = getSelectedRecord();
   if (selected && isIgnoredRequestUrl(selected.url)) {
@@ -1190,19 +1369,24 @@ el.resetIgnoredParamsBtn.addEventListener('click', () => {
   render();
 });
 
-el.clearBtn.addEventListener('click', () => {
+function clearRequestRecords(placeholderText) {
   state.records = [];
   state.selectedId = null;
+  state.nextId = 1;
   el.detailMeta.textContent = t('selectRequest');
   el.detailMeta.classList.remove('business-failed-meta');
   el.previewSearchInput.value = '';
   el.previewContent.innerHTML = '';
   const placeholder = document.createElement('div');
   placeholder.className = 'preview-placeholder';
-  placeholder.textContent = t('clearedPlaceholder');
+  placeholder.textContent = placeholderText;
   el.previewContent.appendChild(placeholder);
   el.copyTokenBtn.disabled = true;
   render();
+}
+
+el.clearBtn.addEventListener('click', () => {
+  clearRequestRecords(t('clearedPlaceholder'));
 });
 
 function openHelp() {
@@ -1312,6 +1496,11 @@ if (Number.isFinite(savedHeight) && savedHeight > 0) {
   document.documentElement.style.setProperty('--list-height', `${savedHeight}px`);
 }
 
+const savedRequestListSize = Number(localStorage.getItem(REQUEST_LIST_SIZE_STORAGE_KEY));
+if (Number.isFinite(savedRequestListSize) && savedRequestListSize >= 30 && savedRequestListSize <= 85) {
+  document.documentElement.style.setProperty('--request-list-size', `${savedRequestListSize}%`);
+}
+
 setLayoutMode(state.layoutMode, false);
 
 for (const button of el.layoutModeButtons) {
@@ -1350,6 +1539,41 @@ function endResize(event) {
 el.splitter.addEventListener('pointerup', endResize);
 el.splitter.addEventListener('pointercancel', endResize);
 
+function setRequestListSize(px) {
+  const total = isStackedLayout() ? el.listPane.clientWidth : el.listPane.clientHeight;
+  if (!total) return;
+  const min = Math.min(120, total * 0.35);
+  const max = Math.max(min, total - 127);
+  const percentage = clamp(px, min, max) / total * 100;
+  document.documentElement.style.setProperty('--request-list-size', `${percentage}%`);
+  localStorage.setItem(REQUEST_LIST_SIZE_STORAGE_KEY, String(percentage));
+}
+
+// 主面板为上下布局时，请求列表与参数左右分隔；否则在左侧区域内上下分隔。
+el.requestParamsSplitter.addEventListener('pointerdown', event => {
+  event.preventDefault();
+  el.requestParamsSplitter.setPointerCapture(event.pointerId);
+  el.requestParamsSplitter.classList.add('dragging');
+  document.body.classList.add(isStackedLayout() ? 'resizing-request-horizontal' : 'resizing-request-vertical');
+});
+
+el.requestParamsSplitter.addEventListener('pointermove', event => {
+  if (!el.requestParamsSplitter.hasPointerCapture(event.pointerId)) return;
+  const rect = el.listPane.getBoundingClientRect();
+  setRequestListSize(isStackedLayout() ? event.clientX - rect.left : event.clientY - rect.top);
+});
+
+function endRequestParamsResize(event) {
+  if (el.requestParamsSplitter.hasPointerCapture(event.pointerId)) {
+    el.requestParamsSplitter.releasePointerCapture(event.pointerId);
+  }
+  el.requestParamsSplitter.classList.remove('dragging');
+  document.body.classList.remove('resizing-request-horizontal', 'resizing-request-vertical');
+}
+
+el.requestParamsSplitter.addEventListener('pointerup', endRequestParamsResize);
+el.requestParamsSplitter.addEventListener('pointercancel', endRequestParamsResize);
+
 // 普通网页预览使用本地样例走同一套渲染流程，不发送任何模拟网络请求。
 function loadPreviewRequests() {
   // 响应字段故意不按字母排列，便于检查排序切换、搜索和复杂值展示。
@@ -1382,7 +1606,7 @@ function loadPreviewRequests() {
       body: 'Service is healthy. This is a plain text response.',
     },
     {
-      path: '/api/projects/list?page=1&pageSize=20&keyword=demo&_t=1789180200000', method: 'GET', status: 200, time: 168,
+      path: '/api/his/his/his/networkConfigSpec/view/cuOwnership?page=1&pageSize=20&keyword=demo&_t=1789180200000', method: 'GET', status: 200, time: 168,
       body: {
         isSuccess: true, message: '查询成功', code: 200,
         data: {
@@ -1424,11 +1648,12 @@ function loadPreviewRequests() {
 }
 
 if (globalThis.chrome?.devtools?.network) {
-  // 扩展环境先读取已有请求，再监听后续请求，不加载样例。
-  chrome.devtools.network.getHAR(log => {
-    for (const entry of log.entries || []) addRequest(entry);
-  });
+  // 只记录面板打开后的新请求，刷新面板后从空列表开始。
   chrome.devtools.network.onRequestFinished.addListener(addRequest);
+  // 被调试页面刷新或跳转时清空旧页面记录，避免两次请求混在一起。
+  chrome.devtools.network.onNavigated.addListener(() => {
+    clearRequestRecords(t('pageReloadedPlaceholder'));
+  });
 } else if (location.protocol === 'http:' || location.protocol === 'https:' || location.protocol === 'file:') {
   // 明确标记网页预览，避免把样例误认为实际抓取的接口。
   const previewBadge = document.createElement('span');

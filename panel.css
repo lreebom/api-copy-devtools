@@ -4,6 +4,7 @@
   font-size: 13px;
   --list-width: 46%;
   --list-height: 46%;
+  --request-list-size: 70%;
   --border: color-mix(in srgb, CanvasText 14%, transparent);
   --border-soft: color-mix(in srgb, CanvasText 8%, transparent);
   --muted: color-mix(in srgb, CanvasText 62%, transparent);
@@ -92,6 +93,7 @@ button.ghost { opacity: .78; }
   background: Field; color: FieldText; outline: none; font-size: 12px;
 }
 .filter-setting-input:focus { border-color: color-mix(in srgb, var(--accent) 70%, CanvasText 15%); }
+.path-prefix-input { max-width: 96px; }
 .param-filter-help { color: var(--muted); font-size: 11px; min-width: 0; flex: 1; }
 .param-filter-help code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
@@ -102,6 +104,10 @@ button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
   display: flex; flex-direction: column; overflow: hidden;
   background: Canvas;
 }
+.request-list-section {
+  min-height: 120px; flex: 0 0 var(--request-list-size);
+  display: flex; flex-direction: column; overflow: hidden;
+}
 .list-header, .detail-header {
   min-height: 32px; padding: 2px 8px; display: flex; align-items: center; justify-content: space-between;
   border-bottom: 1px solid var(--border-soft);
@@ -109,6 +115,7 @@ button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
 .list-header { font-size: 13px; font-weight: 650; background: var(--surface-subtle); }
 .list-header-actions { display: flex; align-items: center; gap: 7px; }
 .list-clear-btn { height: 24px; }
+.list-clear-btn .icon-svg { color: #d93025; }
 .count-badge {
   font-weight: 500; font-size: 11px; line-height: 20px; height: 20px; padding: 0 7px;
   border-radius: 10px; background: color-mix(in srgb, CanvasText 7%, transparent); color: var(--muted);
@@ -148,6 +155,60 @@ button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
 }
 .empty { padding: 24px 16px; opacity: .6; text-align: center; font-size: 12px; }
 
+.request-params-pane {
+  min-height: 120px; flex: 1 1 auto;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: Canvas;
+}
+.request-params-splitter {
+  position: relative; width: 100%; height: 7px; flex: 0 0 7px;
+  cursor: row-resize; background: transparent; user-select: none; touch-action: none;
+}
+.request-params-splitter::after {
+  content: ""; position: absolute; top: 3px; right: 0; bottom: auto; left: 0;
+  height: 1px; background: var(--border);
+}
+.request-params-splitter:hover,
+.request-params-splitter.dragging { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.request-params-header {
+  min-height: 31px; padding: 4px 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  border-bottom: 1px solid var(--border-soft); background: var(--surface-subtle);
+}
+.request-params-header strong { font-size: 12px; font-weight: 650; }
+.request-params-meta {
+  min-width: 0; overflow: hidden; color: var(--muted); font-size: 10px;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.request-params-content {
+  min-height: 0; flex: 1; overflow: auto; padding: 7px 8px 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px; line-height: 1.45;
+}
+.request-param-section + .request-param-section { margin-top: 10px; }
+.request-param-title {
+  position: sticky; top: -7px; z-index: 1;
+  display: flex; align-items: center; gap: 6px; min-height: 25px; margin: 0 0 4px; padding: 4px 0;
+  color: var(--muted); background: Canvas; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 11px; font-weight: 650;
+}
+.request-param-count {
+  height: 17px; padding: 0 5px; border-radius: 9px;
+  color: var(--muted); background: color-mix(in srgb, CanvasText 7%, transparent);
+  font-size: 9px; font-weight: 600; line-height: 17px;
+}
+.request-param-empty { color: var(--muted); font-size: 11px; }
+.request-param-raw { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.request-query-list { border: 1px solid var(--border-soft); border-radius: 5px; overflow: hidden; }
+.request-query-row {
+  display: grid; grid-template-columns: minmax(68px, 36%) minmax(0, 1fr);
+  border-bottom: 1px solid var(--border-soft);
+}
+.request-query-row:last-child { border-bottom: 0; }
+.request-query-key, .request-query-value { min-width: 0; padding: 4px 6px; overflow-wrap: anywhere; }
+.request-query-key { color: #7b61a8; background: var(--surface-subtle); border-right: 1px solid var(--border-soft); }
+.request-query-value { color: #188038; }
+
 .splitter {
   position: relative; flex: 0 0 7px; width: 7px; cursor: col-resize; background: transparent;
   border: 0;
@@ -160,6 +221,8 @@ button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
 .splitter:hover, .splitter.dragging { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 body.resizing-horizontal { cursor: col-resize; user-select: none; }
 body.resizing-vertical { cursor: row-resize; user-select: none; }
+body.resizing-request-horizontal { cursor: col-resize; user-select: none; }
+body.resizing-request-vertical { cursor: row-resize; user-select: none; }
 
 .detail-pane { min-width: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; background: Canvas; }
 .detail-header { gap: 4px; min-height: 32px; background: var(--surface-subtle); }
@@ -283,6 +346,17 @@ button.json-copy-btn:hover:not(:disabled) {
 .content[data-layout="vertical"] .list-pane {
   width: 100% !important; max-width: none; min-width: 0;
   height: var(--list-height); min-height: 150px; max-height: calc(100% - 157px);
+  flex-direction: row;
+}
+.content[data-layout="vertical"] .request-list-section,
+.content[data-layout="vertical"] .request-params-pane { min-width: 0; min-height: 0; }
+.content[data-layout="vertical"] .request-list-section { width: var(--request-list-size); flex-basis: var(--request-list-size); }
+.content[data-layout="vertical"] .request-params-pane { width: auto; flex: 1 1 auto; }
+.content[data-layout="vertical"] .request-params-splitter {
+  width: 7px; height: 100%; flex-basis: 7px; cursor: col-resize;
+}
+.content[data-layout="vertical"] .request-params-splitter::after {
+  top: 0; right: auto; bottom: 0; left: 3px; width: 1px; height: auto;
 }
 .content[data-layout="vertical"] .splitter {
   width: 100%; height: 7px; flex-basis: 7px; cursor: row-resize;
