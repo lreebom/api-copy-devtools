@@ -4,6 +4,14 @@
 
 All notable changes to API Copy are documented here.
 
+## 0.3.0 - 2026-09-16
+
+- Added a resizable request parameter panel with URL Query parameters and request Body inspection.
+- Added global path-prefix trimming and an option to show or hide URL Query parameters in the request list.
+- Added request sequence numbers and reset recorded requests after page navigation.
+- Improved JSON Preview with focused default expansion, match navigation, preserved expansion states, type-aware summaries, and clearer string values.
+- Refined responsive panel sizing, headers, search controls, and JSON layout.
+
 ## 0.2.0 - 2026-09-14
 
 - Added automatic, side-by-side, and stacked layout controls with remembered selection.

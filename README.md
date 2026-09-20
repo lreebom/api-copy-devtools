@@ -22,10 +22,14 @@ Its goal is simple: reduce repetitive work in the Network panel when copying URL
   - `isSuccess === false`
   - `code` exists and is not `0` / `200`
 - Configurable filtering: `_t` is removed by default, and `/jsfulldatasave-be/savedatasfromjs` is excluded as a telemetry endpoint.
+- Request parameters: shows URL Query parameters as a list and shows JSON or raw request Bodies beside the request list.
+- Request-list display: supports globally trimming leading path segments and optionally showing URL Query parameters; Query parameters are hidden by default.
 - JSON Preview:
   - Sorts object keys A-Z
-  - Searches keys and values
+  - Searches keys and values, shows match count, and moves through matches
   - Expands / collapses objects and arrays
+  - Defaults to expanding the root and top-level `data`; search expands only matched paths
+  - Distinguishes strings, numbers, booleans, nulls, objects, and arrays
   - Copies field values with one click
   - Collapses long strings and supports expand / collapse through a field action or double-click
 - Automatic, side-by-side, and stacked panel layouts, with remembered mode and draggable sizing.
@@ -153,7 +157,7 @@ Run:
 Output:
 
 ```text
-dist/api-copy-devtools-v0.2.0.zip
+dist/api-copy-devtools-v0.3.0.zip
 ```
 
 The ZIP root contains `manifest.json` directly and can be uploaded to the Chrome Web Store.

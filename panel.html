@@ -63,6 +63,11 @@
           <input id="pathPrefixSegmentsInput" class="filter-setting-input path-prefix-input" type="number" min="0" max="50" step="1" value="3" data-i18n-aria-label="pathPrefixSegments" />
           <div class="param-filter-help" data-i18n="pathPrefixSegmentsHelp">对所有请求统一生效，按路径段数量隐藏前缀；复制仍使用原路径。默认截断 3 段。</div>
         </div>
+        <div class="filter-setting-row">
+          <div class="param-filter-label" data-i18n="showUrlQuery">列表展示 Query 参数</div>
+          <label class="setting-checkbox"><input id="showUrlQueryInput" type="checkbox" /><span data-i18n="showUrlQueryEnabled">展示</span></label>
+          <div class="param-filter-help" data-i18n="showUrlQueryHelp">默认不展示；Query 参数仍可在下方请求参数区域查看。</div>
+        </div>
       </div>
       <button id="resetIgnoredParamsBtn" class="ghost compact utility-action" title="恢复默认过滤设置" data-i18n-title="resetFiltersTitle"><svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8v5h5M5.5 17a8 8 0 1 0 .2-10.2L4 8" /></svg><span data-i18n="resetDefaults">恢复默认</span></button>
     </div>
@@ -78,6 +83,7 @@
             <span id="countText" class="count-badge">0 条</span>
           </div>
           <div class="list-columns" aria-hidden="true">
+            <span>#</span>
             <span data-i18n="status">状态</span>
             <span data-i18n="path">路径</span>
           </div>
@@ -124,6 +130,15 @@
               <span class="sort-label">A–Z</span>
             </button>
             <input id="previewSearchInput" class="preview-search" type="search" placeholder="搜索响应字段 / 值" data-i18n-placeholder="previewSearchPlaceholder" autocomplete="off" />
+            <div id="previewSearchMatches" class="preview-search-matches" hidden>
+              <span id="previewMatchCount" class="preview-match-count" aria-live="polite"></span>
+              <button id="previewMatchPrevBtn" class="preview-match-btn" type="button" title="上一个匹配项" aria-label="上一个匹配项" data-i18n-title="previousMatch" data-i18n-aria-label="previousMatch">
+                <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 14 5-5 5 5" /></svg>
+              </button>
+              <button id="previewMatchNextBtn" class="preview-match-btn" type="button" title="下一个匹配项" aria-label="下一个匹配项" data-i18n-title="nextMatch" data-i18n-aria-label="nextMatch">
+                <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+              </button>
+            </div>
             <span id="copyStatus" class="copy-status"></span>
           </div>
         </div>

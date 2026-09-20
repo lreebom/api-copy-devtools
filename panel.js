@@ -7,6 +7,7 @@ const DEFAULT_PATH_PREFIX_SEGMENTS = 3;
 const IGNORED_PARAMS_STORAGE_KEY = 'apiCopyIgnoredQueryParams';
 const IGNORED_PATHS_STORAGE_KEY = 'apiCopyIgnoredUrlPaths';
 const PATH_PREFIX_SEGMENTS_STORAGE_KEY = 'apiCopyPathPrefixSegments';
+const SHOW_URL_QUERY_STORAGE_KEY = 'apiCopyShowUrlQuery';
 const LAYOUT_MODE_STORAGE_KEY = 'apiCopyLayoutMode';
 const REQUEST_LIST_SIZE_STORAGE_KEY = 'apiCopyRequestListSize';
 
@@ -51,6 +52,9 @@ const I18N_FALLBACKS = {
   sortAlphabeticallyTitle: '当前：按字母排序；点击切换为原始 JSON 顺序',
   sortOriginalTitle: '当前：原始 JSON 顺序；点击切换为按字母排序',
   originalOrderShort: '原序',
+  previousMatch: '上一个匹配项',
+  nextMatch: '下一个匹配项',
+  searchMatchCount: '$1 / $2',
   requestParameters: '请求参数',
   selectRequestForParams: '选择一条请求后查看 Query 和 Body 参数。',
   queryParameters: 'Query 参数',
@@ -127,6 +131,10 @@ function loadPathPrefixSegments() {
   return Number.isInteger(saved) && saved >= 0 && saved <= 50 ? saved : DEFAULT_PATH_PREFIX_SEGMENTS;
 }
 
+function loadShowUrlQuery() {
+  return localStorage.getItem(SHOW_URL_QUERY_STORAGE_KEY) === 'true';
+}
+
 const state = {
   records: [],
   selectedId: null,
@@ -136,8 +144,19 @@ const state = {
   ignoredUrlPaths: loadIgnoredUrlPaths(),
   // 请求列表隐藏统一网关前缀，复制时仍使用真实路径。
   pathPrefixSegments: loadPathPrefixSegments(),
+  // 请求列表默认隐藏 Query，参数区仍保留完整参数。
+  showUrlQuery: loadShowUrlQuery(),
   // Preview 默认按字母排列字段，切换请求时保留当前排序方式。
   previewSortOrder: 'alphabetical',
+  // 搜索清空时暂存当前 JSON 节点的展开状态，避免视图突然折叠。
+  previewOpenStates: null,
+  // 用于判断本次输入是否从有搜索词切换为清空状态。
+  previewSearchQuery: '',
+  // 当前 JSON 搜索命中项及其在列表中的位置。
+  previewMatches: [],
+  previewMatchIndex: -1,
+  // 当前预览对应的请求，用于区分“列表刷新”和“切换接口”。
+  previewRecordId: null,
   // 自动模式响应面板宽度，手动模式固定用户选择的布局方向。
   layoutMode: loadLayoutMode(),
 };
@@ -155,6 +174,7 @@ const el = {
   ignoredParamsInput: document.querySelector('#ignoredParamsInput'),
   ignoredPathsInput: document.querySelector('#ignoredPathsInput'),
   pathPrefixSegmentsInput: document.querySelector('#pathPrefixSegmentsInput'),
+  showUrlQueryInput: document.querySelector('#showUrlQueryInput'),
   resetIgnoredParamsBtn: document.querySelector('#resetIgnoredParamsBtn'),
   clearBtn: document.querySelector('#clearBtn'),
   requestList: document.querySelector('#requestList'),
@@ -165,6 +185,10 @@ const el = {
   detailMeta: document.querySelector('#detailMeta'),
   previewContent: document.querySelector('#previewContent'),
   previewSearchInput: document.querySelector('#previewSearchInput'),
+  previewSearchMatches: document.querySelector('#previewSearchMatches'),
+  previewMatchCount: document.querySelector('#previewMatchCount'),
+  previewMatchPrevBtn: document.querySelector('#previewMatchPrevBtn'),
+  previewMatchNextBtn: document.querySelector('#previewMatchNextBtn'),
   // JSON 字段排序切换控件。
   previewSortBtn: document.querySelector('#previewSortBtn'),
   content: document.querySelector('#content'),
@@ -636,16 +660,18 @@ function formatRecordSimple(record) {
   ].join('\n');
 }
 
-function getDisplayUrl(rawUrl) {
+function getDisplayUrl(rawUrl, includeQuery = state.showUrlQuery) {
   const filteredUrl = filterUrlQuery(rawUrl);
   try {
     const url = new URL(filteredUrl);
-    return `${trimDisplayPath(url.pathname || '/')}${url.search || ''}`;
+    return `${trimDisplayPath(url.pathname || '/')}${includeQuery ? url.search || '' : ''}`;
   } catch {
     const value = String(filteredUrl || '');
-    const suffixIndex = value.search(/[?#]/);
+    const queryIndex = value.indexOf('?');
+    const hashIndex = value.indexOf('#');
+    const suffixIndex = [queryIndex, hashIndex].filter(index => index >= 0).sort((a, b) => a - b)[0] ?? -1;
     const pathname = suffixIndex >= 0 ? value.slice(0, suffixIndex) : value;
-    const suffix = suffixIndex >= 0 ? value.slice(suffixIndex) : '';
+    const suffix = includeQuery && suffixIndex >= 0 ? value.slice(suffixIndex) : hashIndex >= 0 ? value.slice(hashIndex) : '';
     return `${trimDisplayPath(pathname)}${suffix}`;
   }
 }
@@ -666,7 +692,7 @@ function filteredRecords() {
     if (isIgnoredRequestUrl(record.url)) return false;
     if (!keyword) return true;
     const businessText = record.businessState === 'failure' ? `${t('businessFailure')} ${record.businessReason || ''}` : '';
-    return `${record.method} ${record.status} ${getDisplayUrl(record.url)} ${businessText}`.toLowerCase().includes(keyword);
+    return `${record.method} ${record.status} ${getDisplayUrl(record.url, true)} ${businessText}`.toLowerCase().includes(keyword);
   });
 }
 
@@ -741,13 +767,17 @@ function render() {
     el.requestList.appendChild(empty);
   } else {
     el.requestList.innerHTML = '';
-    for (const record of displayRecords) {
+    for (const [index, record] of displayRecords.entries()) {
       const row = document.createElement('div');
       const isBusinessFailure = record.businessState === 'failure';
       row.className = `request-row${record.id === state.selectedId ? ' selected' : ''}${isBusinessFailure ? ' business-failed' : ''}`;
       row.title = isBusinessFailure
         ? `${getDisplayUrl(record.url)}\n${record.businessReason ? t('businessFailureWithReason', record.businessReason) : t('businessFailure')}`
         : getDisplayUrl(record.url);
+
+      const requestIndex = document.createElement('span');
+      requestIndex.className = 'request-index';
+      requestIndex.textContent = String(index + 1);
 
       const method = document.createElement('span');
       method.className = 'method';
@@ -785,7 +815,7 @@ function render() {
         createRowCopyButton('simple', t('copySimpleRequest'), () => copyText(formatRecordSimple(record))),
       );
 
-      row.append(requestMeta, urlCell, rowActions);
+      row.append(requestIndex, requestMeta, urlCell, rowActions);
       row.addEventListener('click', () => {
         // 鼠标拖拽框选列表文字时，不要因为 click 重新渲染而破坏选区。
         if (hasTextSelection()) return;
@@ -800,6 +830,10 @@ function render() {
 
 function selectRecord(id) {
   state.selectedId = id;
+  state.previewOpenStates = null;
+  state.previewSearchQuery = el.previewSearchInput.value.trim().toLowerCase();
+  state.previewMatchIndex = 0;
+  state.previewRecordId = null;
   el.copyFullBtn.disabled = false;
   el.copySimpleBtn.disabled = false;
   el.copyPathBtn.disabled = false;
@@ -858,6 +892,10 @@ function primitiveText(value) {
   if (value === null) return 'null';
   if (typeof value === 'string') return value;
   return String(value);
+}
+
+function formatJsonPrimitive(value) {
+  return typeof value === 'string' ? JSON.stringify(value) : primitiveText(value);
 }
 
 function textMatches(value, query) {
@@ -972,8 +1010,10 @@ function appendPrimitive(parent, value, key = null, query = '') {
   }
   const valueEl = document.createElement('span');
   const rawValueText = primitiveText(value);
+  // 仅展示时补全字符串引号，复制和长文本判断仍使用原始值。
+  const displayValueText = formatJsonPrimitive(value);
   valueEl.className = `json-value ${valueClass(value)}`.trim();
-  valueEl.textContent = rawValueText;
+  valueEl.textContent = displayValueText;
 
   if (typeof value === 'string' && rawValueText.length > 80) {
     line.classList.add('json-long-line');
@@ -990,7 +1030,66 @@ function appendPrimitive(parent, value, key = null, query = '') {
   parent.appendChild(line);
 }
 
-function buildJsonNode(value, key = null, depth = 0, query = '') {
+function getPreviewOpenStates() {
+  const openStates = new Map();
+  for (const details of el.previewContent.querySelectorAll('details[data-json-path]')) {
+    openStates.set(details.dataset.jsonPath, details.open);
+  }
+  return openStates;
+}
+
+function preservePreviewOpenStates(record) {
+  const query = el.previewSearchInput.value.trim();
+  // 仅在同一条接口、未搜索时保存手动展开状态；搜索中的展开规则由匹配路径决定。
+  if (!record || state.previewRecordId !== record.id || query) return;
+  state.previewOpenStates = getPreviewOpenStates();
+}
+
+function summaryEntryPriority(key) {
+  const normalized = String(key).toLowerCase();
+  if (normalized.includes('name')) return 0;
+  if (normalized === 'id' || normalized.endsWith('id')) return 1;
+  return 2;
+}
+
+function appendJsonSummaryPreview(parent, value) {
+  if (Array.isArray(value) || !value || typeof value !== 'object') return;
+
+  // 摘要优先展示名称和标识字段，其余字段沿用当前 JSON 排序方式。
+  const entries = sortedEntries(value)
+    .map(([key, childValue], index) => ({ key, childValue, index }))
+    .sort((a, b) => summaryEntryPriority(a.key) - summaryEntryPriority(b.key) || a.index - b.index)
+    .map(({ key, childValue }) => [key, childValue]);
+  if (!entries.length) return;
+
+  const preview = document.createElement('span');
+  preview.className = 'json-summary-preview';
+  const maxEntries = 3;
+
+  for (const [index, [childKey, childValue]] of entries.slice(0, maxEntries).entries()) {
+    if (index) preview.appendChild(document.createTextNode(', '));
+
+    const keyEl = document.createElement('span');
+    keyEl.className = 'json-key';
+    keyEl.textContent = `${childKey}: `;
+    preview.appendChild(keyEl);
+
+    const valueEl = document.createElement('span');
+    if (childValue !== null && typeof childValue === 'object') {
+      valueEl.className = 'json-type';
+      valueEl.textContent = Array.isArray(childValue) ? '[…]' : '{…}';
+    } else {
+      valueEl.className = `json-value ${valueClass(childValue)}`.trim();
+      valueEl.textContent = formatJsonPrimitive(childValue);
+    }
+    preview.appendChild(valueEl);
+  }
+
+  if (entries.length > maxEntries) preview.appendChild(document.createTextNode(', …'));
+  parent.appendChild(preview);
+}
+
+function buildJsonNode(value, key = null, depth = 0, query = '', openStates = null, path = '') {
   const wrapper = document.createElement('div');
   wrapper.className = depth === 0 ? 'json-node json-root' : 'json-node';
 
@@ -1002,13 +1101,15 @@ function buildJsonNode(value, key = null, depth = 0, query = '') {
   const isArray = Array.isArray(value);
   const allEntries = sortedEntries(value);
   const keyMatched = key !== null && textMatches(key, query);
-  const entries = query && !keyMatched
-    ? allEntries.filter(([childKey, childValue]) => nodeMatches(childValue, childKey, query))
-    : allEntries;
 
   const details = document.createElement('details');
   details.className = 'json-details';
-  details.open = query ? true : depth < 4;
+  details.dataset.jsonPath = path;
+  const defaultOpen = depth === 0 || (depth === 1 && key === 'data');
+  // 搜索仅强制展开命中节点及其父级路径，未命中节点保留搜索前的展开状态。
+  details.open = query && nodeMatches(value, key, query)
+    ? true
+    : openStates?.get(path) ?? defaultOpen;
 
   const summary = document.createElement('summary');
   summary.className = 'json-summary';
@@ -1021,17 +1122,11 @@ function buildJsonNode(value, key = null, depth = 0, query = '') {
     summary.appendChild(keyEl);
   }
 
-  const bracket = document.createElement('span');
-  bracket.className = 'json-bracket';
-  bracket.textContent = isArray ? '[' : '{';
-  summary.appendChild(bracket);
-
   const type = document.createElement('span');
-  type.className = 'json-type';
-  type.textContent = allEntries.length
-    ? ` ${isArray ? `Array(${allEntries.length})` : `{${allEntries.length}}`}`
-    : ` ${isArray ? '[]' : '{}'}`;
+  type.className = 'json-type json-summary-count';
+  type.textContent = isArray ? `Array [${allEntries.length}]` : `Object {${allEntries.length}}`;
   summary.appendChild(type);
+  appendJsonSummaryPreview(summary, value);
 
   const actions = createFieldActions(key, value);
   if (actions) summary.appendChild(actions);
@@ -1044,8 +1139,9 @@ function buildJsonNode(value, key = null, depth = 0, query = '') {
     empty.textContent = isArray ? '[]' : '{}';
     details.appendChild(empty);
   } else {
-    for (const [childKey, childValue] of entries) {
-      details.appendChild(buildJsonNode(childValue, childKey, depth + 1, query));
+    for (const [childKey, childValue] of allEntries) {
+      const childPath = `${path}/${String(childKey).replaceAll('~', '~0').replaceAll('/', '~1')}`;
+      details.appendChild(buildJsonNode(childValue, childKey, depth + 1, query, openStates, childPath));
     }
   }
 
@@ -1107,7 +1203,9 @@ function appendRequestParamSection(title, value, emptyText, count = null) {
     raw.textContent = value;
     section.appendChild(raw);
   } else {
-    section.appendChild(buildJsonNode(value));
+    const jsonNode = buildJsonNode(value);
+    jsonNode.classList.add('request-param-json');
+    section.appendChild(jsonNode);
   }
 
   el.requestParamsContent.appendChild(section);
@@ -1174,12 +1272,61 @@ function renderRequestParameters(record) {
   appendRequestParamSection(t('requestBody'), body, t('noRequestBody'));
 }
 
+function clearPreviewSearchMatches() {
+  state.previewMatches = [];
+  state.previewMatchIndex = -1;
+  el.previewSearchMatches.hidden = true;
+  el.previewMatchCount.textContent = '';
+  el.previewMatchPrevBtn.disabled = true;
+  el.previewMatchNextBtn.disabled = true;
+}
+
+function setPreviewMatchIndex(index, shouldScroll = true) {
+  const matches = state.previewMatches;
+  if (!matches.length) return;
+
+  state.previewMatchIndex = (index + matches.length) % matches.length;
+  for (const item of matches) item.classList.remove('json-match-active');
+
+  const current = matches[state.previewMatchIndex];
+  current.classList.add('json-match-active');
+  el.previewMatchCount.textContent = t('searchMatchCount', [state.previewMatchIndex + 1, matches.length]);
+
+  if (shouldScroll) {
+    requestAnimationFrame(() => current.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+  }
+}
+
+function renderPreviewSearchMatches(query) {
+  if (!query) {
+    clearPreviewSearchMatches();
+    return;
+  }
+
+  state.previewMatches = [...el.previewContent.querySelectorAll('.json-match, .text-match')];
+  if (!state.previewMatches.length) {
+    clearPreviewSearchMatches();
+    return;
+  }
+
+  el.previewSearchMatches.hidden = false;
+  el.previewMatchPrevBtn.disabled = state.previewMatches.length < 2;
+  el.previewMatchNextBtn.disabled = state.previewMatches.length < 2;
+  if (state.previewMatchIndex < 0 || state.previewMatchIndex >= state.previewMatches.length) {
+    state.previewMatchIndex = 0;
+  }
+  setPreviewMatchIndex(state.previewMatchIndex);
+}
+
 function renderPreview(record) {
   el.previewContent.innerHTML = '';
+  clearPreviewSearchMatches();
   const raw = record.responseBody || '';
   const pretty = tryPretty(raw, record.mimeType);
   const trimmed = typeof raw === 'string' ? raw.trim() : '';
   const query = el.previewSearchInput.value.trim().toLowerCase();
+  // 搜索和清空搜索时都沿用原有展开状态，仅对命中路径作额外展开。
+  const openStates = state.previewOpenStates;
 
   const placeholderResponses = new Set([t('loadingResponse'), t('noReadableResponse'), t('unsupportedResponse')]);
   if (!trimmed || placeholderResponses.has(raw)) {
@@ -1200,7 +1347,9 @@ function renderPreview(record) {
         el.previewContent.appendChild(placeholder);
         return;
       }
-      el.previewContent.appendChild(buildJsonNode(data, null, 0, query));
+      el.previewContent.appendChild(buildJsonNode(data, null, 0, query, openStates));
+      state.previewRecordId = record.id;
+      renderPreviewSearchMatches(query);
       return;
     } catch {}
   }
@@ -1218,6 +1367,8 @@ function renderPreview(record) {
   pre.className = 'preview-raw';
   appendHighlightedRaw(pre, rawText, query);
   el.previewContent.appendChild(pre);
+  state.previewRecordId = record.id;
+  renderPreviewSearchMatches(query);
 }
 
 function renderDetail() {
@@ -1228,7 +1379,12 @@ function renderDetail() {
   el.copyPathQueryBtn.disabled = !record;
   el.copyTokenBtn.disabled = !record || !getTokenFromRecord(record);
   renderRequestParameters(record);
-  if (!record) return;
+  if (!record) {
+    clearPreviewSearchMatches();
+    return;
+  }
+
+  preservePreviewOpenStates(record);
 
   const businessMeta = record.businessState === 'failure'
     ? ` · ${record.businessReason ? t('businessFailureMetaWithReason', record.businessReason) : t('businessFailureMeta')}`
@@ -1268,7 +1424,19 @@ el.filterClearBtn.addEventListener('click', () => {
   el.filterInput.focus();
   render();
 });
-el.previewSearchInput.addEventListener('input', renderDetail);
+el.previewSearchInput.addEventListener('input', () => {
+  const query = el.previewSearchInput.value.trim().toLowerCase();
+  if (!state.previewSearchQuery && query) {
+    state.previewOpenStates = getPreviewOpenStates();
+  } else if (state.previewSearchQuery && !query) {
+    state.previewOpenStates = getPreviewOpenStates();
+  }
+  state.previewSearchQuery = query;
+  state.previewMatchIndex = query ? 0 : -1;
+  renderDetail();
+});
+el.previewMatchPrevBtn.addEventListener('click', () => setPreviewMatchIndex(state.previewMatchIndex - 1));
+el.previewMatchNextBtn.addEventListener('click', () => setPreviewMatchIndex(state.previewMatchIndex + 1));
 // 切换排序后立即刷新当前响应，沿用已有搜索条件。
 el.previewSortBtn.addEventListener('click', () => {
   // 字母模式高亮显示 A–Z 图标，原始模式显示带序号的列表图标。
@@ -1312,6 +1480,7 @@ el.copyTokenBtn.addEventListener('click', () => {
 el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
 el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
 el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
+el.showUrlQueryInput.checked = state.showUrlQuery;
 el.paramFilterBtn.setAttribute('aria-expanded', 'false');
 
 el.paramFilterBtn.addEventListener('click', () => {
@@ -1322,6 +1491,7 @@ el.paramFilterBtn.addEventListener('click', () => {
     el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
     el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
     el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
+    el.showUrlQueryInput.checked = state.showUrlQuery;
     el.ignoredParamsInput.focus();
     el.ignoredParamsInput.select();
   }
@@ -1344,16 +1514,25 @@ el.pathPrefixSegmentsInput.addEventListener('blur', event => {
   if (event.target.value === '') event.target.value = String(state.pathPrefixSegments);
 });
 
+el.showUrlQueryInput.addEventListener('change', event => {
+  state.showUrlQuery = event.target.checked;
+  localStorage.setItem(SHOW_URL_QUERY_STORAGE_KEY, String(state.showUrlQuery));
+  render();
+});
+
 el.resetIgnoredParamsBtn.addEventListener('click', () => {
   state.ignoredQueryParams = [...DEFAULT_IGNORED_QUERY_PARAMS];
   state.ignoredUrlPaths = [...DEFAULT_IGNORED_URL_PATHS];
   state.pathPrefixSegments = DEFAULT_PATH_PREFIX_SEGMENTS;
+  state.showUrlQuery = false;
   localStorage.setItem(IGNORED_PARAMS_STORAGE_KEY, JSON.stringify(state.ignoredQueryParams));
   localStorage.setItem(IGNORED_PATHS_STORAGE_KEY, JSON.stringify(state.ignoredUrlPaths));
   localStorage.setItem(PATH_PREFIX_SEGMENTS_STORAGE_KEY, String(state.pathPrefixSegments));
+  localStorage.setItem(SHOW_URL_QUERY_STORAGE_KEY, String(state.showUrlQuery));
   el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
   el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
   el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
+  el.showUrlQueryInput.checked = state.showUrlQuery;
 
   const selected = getSelectedRecord();
   if (selected && isIgnoredRequestUrl(selected.url)) {
@@ -1373,6 +1552,11 @@ function clearRequestRecords(placeholderText) {
   state.records = [];
   state.selectedId = null;
   state.nextId = 1;
+  state.previewOpenStates = null;
+  state.previewSearchQuery = '';
+  state.previewMatches = [];
+  state.previewMatchIndex = -1;
+  state.previewRecordId = null;
   el.detailMeta.textContent = t('selectRequest');
   el.detailMeta.classList.remove('business-failed-meta');
   el.previewSearchInput.value = '';

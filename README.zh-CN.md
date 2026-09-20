@@ -22,10 +22,14 @@ API Copy 是一个面向前后端联调场景的 Chrome DevTools 扩展，用来
   - `isSuccess === false`
   - `code` 存在且不为 `0` / `200`
 - 过滤设置：默认移除 Query 参数 `_t`，并排除埋点接口 `/jsfulldatasave-be/savedatasfromjs`；支持自行配置多个参数和接口路径。
+- 请求参数：在请求列表旁展示 URL Query 参数列表，以及 JSON 或原始文本格式的请求 Body。
+- 请求列表展示：支持全局截断路径前缀，并可选择是否展示 URL Query 参数；默认不展示 Query。
 - JSON Preview：
   - 对象字段按 A-Z 排序
-  - 搜索字段和值
+  - 搜索字段和值，展示命中数量并支持上下切换命中项
   - 展开 / 收起对象与数组
+  - 默认展开根节点和顶层 `data`；搜索时只展开命中路径
+  - 区分字符串、数字、布尔值、null、对象和数组
   - 一键复制字段值
   - 长字符串自动收缩，可通过字段按钮或双击展开 / 收起
 - 支持自动、左右和上下三种面板布局，并分别记住布局模式和拖拽尺寸。
@@ -153,7 +157,7 @@ api-copy-devtools/
 会生成：
 
 ```text
-dist/api-copy-devtools-v0.2.0.zip
+dist/api-copy-devtools-v0.3.0.zip
 ```
 
 ZIP 根目录直接包含 `manifest.json`，后续可用于 Chrome Web Store 上传。
