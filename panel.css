@@ -187,14 +187,13 @@ button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
   text-overflow: ellipsis; white-space: nowrap;
 }
 .request-params-content {
-  min-height: 0; flex: 1; overflow: auto; padding: 7px 8px 10px 12px;
+  min-height: 0; flex: 1; overflow: auto; padding: 6px 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px; line-height: 1.45;
 }
-.request-param-section + .request-param-section { margin-top: 10px; }
+.request-param-section { margin-bottom: 5px; }
 .request-param-title {
-  position: sticky; top: -7px; z-index: 1;
-  display: flex; align-items: center; gap: 6px; min-height: 25px; margin: 0 0 4px; padding: 4px 0;
+  display: flex; align-items: center; gap: 6px; min-height: 25px; margin: 0; padding: 0;
   color: var(--muted); background: Canvas; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 11px; font-weight: 650;
 }
@@ -293,7 +292,17 @@ button.preview-match-btn:focus-visible { outline: 2px solid var(--accent); outli
 .json-root { margin-left: 0; }
 .json-details { margin: 0; padding: 0; }
 /* summary 与普通字段统一为固定行高，避免对象节点前后出现额外留白。 */
-.json-summary { min-height: 20px; margin: 0; padding: 0; cursor: default; line-height: 20px; list-style-position: outside; white-space: nowrap; }
+.json-summary { position: relative; min-height: 20px; margin: 0; padding: 0 0 0 12px; cursor: default; line-height: 20px; list-style: none; white-space: nowrap; }
+.json-summary::-webkit-details-marker { display: none; }
+.json-summary::marker { content: ''; }
+/* 箭头固定在独立方框内，正文始终从同一位置开始，展开不会改变字段位置。 */
+.json-summary::before {
+  content: ''; position: absolute; top: 50%; left: 0px; width: 9px; height: 9px; margin: 0;
+  background: currentColor; clip-path: polygon(24% 12%, 24% 88%, 84% 50%);
+  transform: translateY(-50%) rotate(0deg); transform-origin: center; transition: transform .1s ease;
+}
+.json-details[open] > .json-summary::before { transform: translateY(-50%) rotate(90deg); }
+.json-summary-content { display: inline-flex; align-items: center; width: 100%; min-width: 0; }
 .json-line { display: flex; align-items: center; width: 100%; min-width: 0; min-height: 20px; margin: 0; padding: 0; line-height: 20px; }
 
 .json-value {
@@ -355,15 +364,34 @@ button.json-copy-btn:hover:not(:disabled) {
 .json-number { color: #1a73e8; }
 .json-boolean { color: #b06000; }
 .json-null { color: #777; font-style: italic; }
-.json-bracket, .json-type { opacity: .68; }
+.json-bracket, .json-type, .json-range-summary { opacity: .68; }
 .json-summary-preview {
-  display: inline-block; max-width: 54ch; margin-left: 8px; padding: 1px 6px; overflow: hidden;
+  /* 摘要占满当前行的剩余空间，在右侧操作按钮前自动截断。 */
+  display: inline-block; flex: 1 1 auto; width: auto; min-width: 0; max-width: none;
+  margin-left: 3px; padding: 0 2px; overflow: hidden;
   color: var(--muted); border: 1px solid color-mix(in srgb, var(--accent) 4%, transparent);
-  border-radius: 4px; background: color-mix(in srgb, var(--accent) 2%, Canvas); font-size: 11px;
+  border-radius: 3px; background: color-mix(in srgb, var(--accent) 2%, Canvas); font-size: 10px;
   text-overflow: ellipsis; vertical-align: middle; white-space: nowrap;
 }
 /* 展开后正文已经可见，隐藏摘要避免信息重复。 */
 .json-details[open] > .json-summary .json-summary-preview { display: none; }
+/* 悬浮整行给出明确反馈，同时保持树形内容的阅读层级。 */
+.json-summary:hover,
+.json-line:hover {
+  background: color-mix(in srgb, CanvasText 5%, transparent); border-radius: 3px;
+  /* Hover 底色向上下延展，形成比字段摘要更大的可点击反馈区域。 */
+  box-shadow: 0 0 0 2px color-mix(in srgb, CanvasText 5%, transparent);
+}
+/* 对象复制操作固定在当前行右侧，允许覆盖摘要末尾以最大化内容展示宽度。 */
+.json-summary .json-field-actions {
+  position: absolute; top: 0; right: 3px; height: 100%; max-width: none; margin: 0;
+  padding-left: 4px; overflow: visible; visibility: hidden;
+  background: Canvas;
+}
+.json-summary:hover .json-field-actions,
+.json-summary .json-field-actions:focus-within {
+  max-width: none; margin: 0; opacity: 1; pointer-events: auto; visibility: visible;
+}
 .json-empty { opacity: .68; }
 .json-match { background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 3px; }
 /* 整行命中项使用固定行高并垂直居中，避免高亮底色与文字基线错位。 */
@@ -371,10 +399,12 @@ button.json-copy-btn:hover:not(:disabled) {
 .json-match-active { outline: 1px solid color-mix(in srgb, var(--accent) 58%, transparent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .text-match { background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 3px; }
 
-/* Preview 以更紧凑的缩进和行距展示大响应；请求 Body 保持原有阅读空间。 */
-.preview-content .json-node { margin-left: 10px; }
+/* Preview 采用接近 DevTools 的紧凑树形密度；请求 Body 复用相同的节点信息结构。 */
+.preview-content { padding: 6px; line-height: 1.35; }
+/* 箭头占用 12px 固定宽度，子节点使用相同缩进以保持父子正文对齐。 */
+.preview-content .json-node { margin-left: 12px; }
 .preview-content .json-root { margin-left: 0; }
-.preview-content .json-line, .preview-content .json-summary { min-height: 19px; line-height: 19px; }
+.preview-content .json-line, .preview-content .json-summary { min-height: 17px; line-height: 17px; }
 
 /* 自动或手动模式最终都映射为布局方向，保证分隔条和尺寸逻辑保持一致。 */
 .content[data-layout="vertical"] { flex-direction: column; }

@@ -4,6 +4,14 @@
 
 All notable changes to API Copy are documented here.
 
+## 0.4.0 - 2026-09-23
+
+- Improved large JSON Preview handling, preserving complete responses and creating tree nodes on demand.
+- Refined collapsed object summaries to prioritize name, code, ID, and status while using the available row width for more fields.
+- Tightened JSON tree layout and refined disclosure arrows, hover highlighting, and array range labels.
+- Added FormData and URL-encoded form parameter inspection, including available file metadata.
+- Removed redundant empty-state messages from the request parameter panel.
+
 ## 0.3.0 - 2026-09-16
 
 - Added a resizable request parameter panel with URL Query parameters and request Body inspection.

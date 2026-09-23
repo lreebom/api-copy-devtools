@@ -2,9 +2,9 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-API Copy 是一个面向前后端联调场景的 Chrome DevTools 扩展，用来快速查看、筛选和复制 XHR / Fetch 请求与响应信息。
+API Copy 是一个面向接口联调和问题排查的 Chrome DevTools 扩展。它把 XHR / Fetch 请求集中列出，选中后即可在同一面板查看路径、参数和响应，并快速复制。
 
-它的目标很简单：减少在 Network 面板里反复复制 URL、参数、Body、Token 和响应数据的操作，让接口问题更快地交给开发者或 AI 辅助工具分析。
+在 Network 面板中，查看完整请求信息通常要逐条打开请求详情、切换区域；复制路径、参数和响应也需要重复操作。API Copy 将这些信息集中到一个面板，减少来回切换，让接口问题更快地交给开发者或 AI 辅助工具分析。
 
 ## 功能
 
@@ -157,7 +157,7 @@ api-copy-devtools/
 会生成：
 
 ```text
-dist/api-copy-devtools-v0.3.0.zip
+dist/api-copy-devtools-v0.4.0.zip
 ```
 
 ZIP 根目录直接包含 `manifest.json`，后续可用于 Chrome Web Store 上传。

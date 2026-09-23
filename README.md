@@ -2,9 +2,9 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-API Copy is a Chrome DevTools extension for quickly inspecting, filtering, and copying XHR / Fetch requests and responses during frontend-backend integration and debugging.
+API Copy is a Chrome DevTools extension for API integration and debugging. It lists XHR / Fetch requests together, shows a selected request's path, parameters, and response in one panel, and makes them quick to copy.
 
-Its goal is simple: reduce repetitive work in the Network panel when copying URLs, parameters, request bodies, tokens, and response data, so API problems can be handed off to developers or AI-assisted tools faster.
+In the Network panel, reviewing a full request often means opening requests one by one and switching between detail sections. Copying paths, parameters, and responses takes repeated steps too. API Copy brings those details into one panel, reducing back-and-forth so API issues can be shared with developers or AI-assisted tools faster.
 
 ## Features
 
@@ -157,7 +157,7 @@ Run:
 Output:
 
 ```text
-dist/api-copy-devtools-v0.3.0.zip
+dist/api-copy-devtools-v0.4.0.zip
 ```
 
 The ZIP root contains `manifest.json` directly and can be uploaded to the Chrome Web Store.

@@ -6,11 +6,13 @@ API Copy - Request & Response
 
 ## 简短说明
 
-在 Chrome DevTools 中查看、筛选并复制 XHR / Fetch 请求与响应信息。
+集中查看 XHR / Fetch 请求路径、参数和响应，并快速复制，减少在 Network 面板逐条打开请求的操作。
 
 ## 详细说明
 
-API Copy 是一款面向前端开发和接口联调场景的 Chrome DevTools 扩展。它将页面产生的 XHR / Fetch 请求集中展示，并提供清晰、快速的请求信息复制能力。
+在 Chrome 自带的 Network 面板中，通常需要逐条选择请求，再切换不同区域查看路径、Query、请求 Body 和响应；复制这些信息也要反复操作。API Copy 将页面产生的 XHR / Fetch 请求集中列出，选中请求后即可在同一面板查看参数与响应，并快速复制常用内容。
+
+它适合前端开发、接口联调和问题排查：不用在 Network 请求详情间来回切换，就能更快核对接口路径、请求参数和返回结果，并把完整信息交给同事或 AI 工具分析。
 
 主要功能：
 

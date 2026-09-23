@@ -6,11 +6,13 @@ API Copy - Request & Response
 
 ## Summary
 
-Inspect API requests in DevTools, search JSON responses, and copy paths, parameters, request data, responses, or tokens.
+Review XHR/Fetch paths, parameters, and responses in one panel, then copy them without repeatedly opening requests in Network.
 
 ## Detailed description
 
-API Copy is a Chrome DevTools extension for frontend development and API debugging. It collects XHR and Fetch requests from the inspected page in one focused panel and makes request details easy to review and copy.
+In Chrome's Network panel, you usually select requests one at a time and switch between sections to inspect paths, Query parameters, request bodies, and responses. Copying those details also takes repeated steps. API Copy gathers XHR and Fetch requests in one list. Select a request to review its parameters and response in the same panel, then copy the details you need.
+
+API Copy helps with frontend development, API integration, and debugging. Review request paths, parameters, and results with less back-and-forth, then share the relevant details with a teammate or an AI assistant.
 
 Key features:
 

@@ -1,5 +1,7 @@
 const MAX_RECORDS = 500;
-const MAX_CONTENT_CHARS = 2_000_000;
+const MAX_VISIBLE_ARRAY_ITEMS = 100;
+const ARRAY_GROUP_SIZE = 100;
+const PREVIEW_SEARCH_DELAY = 180;
 const STACK_BREAKPOINT = 1100;
 const DEFAULT_IGNORED_QUERY_PARAMS = ['_t'];
 const DEFAULT_IGNORED_URL_PATHS = ['/jsfulldatasave-be/savedatasfromjs'];
@@ -15,7 +17,6 @@ const REQUEST_LIST_SIZE_STORAGE_KEY = 'apiCopyRequestListSize';
 const I18N_FALLBACKS = {
   businessResponseFailed: '业务返回失败',
   base64DecodeFailed: '[响应内容为 Base64，解码失败]',
-  contentTruncated: '[内容过大，仅保留前 $1 个字符]',
   loadingResponse: '[正在读取响应内容…]',
   noReadableResponse: '[无可读取的响应正文]',
   unsupportedResponse: '[当前请求不支持读取响应正文]',
@@ -59,6 +60,10 @@ const I18N_FALLBACKS = {
   selectRequestForParams: '选择一条请求后查看 Query 和 Body 参数。',
   queryParameters: 'Query 参数',
   requestBody: '请求 Body',
+  formData: 'FormData',
+  noFormData: '无 FormData 字段',
+  formDataFile: '文件：$1',
+  formDataFileMeta: '$1 · $2',
   noQueryParameters: '无 Query 参数',
   noRequestBody: '无请求 Body',
   parameterSummary: 'Query $1 项 · Body $2',
@@ -157,6 +162,8 @@ const state = {
   previewMatchIndex: -1,
   // 当前预览对应的请求，用于区分“列表刷新”和“切换接口”。
   previewRecordId: null,
+  // 搜索延迟执行，避免每次输入都重建整棵 JSON 树。
+  previewSearchTimer: null,
   // 自动模式响应面板宽度，手动模式固定用户选择的布局方向。
   layoutMode: loadLayoutMode(),
 };
@@ -235,15 +242,23 @@ function isIgnoredRequestUrl(rawUrl) {
   return state.ignoredUrlPaths.includes(pathname);
 }
 
-function evaluateBusinessResult(body) {
-  if (typeof body !== 'string') return { state: 'unknown', reason: '' };
-  const trimmed = body.trim();
-  if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) {
+function isJsonText(text) {
+  const trimmed = String(text || '').trim();
+  return trimmed.startsWith('{') || trimmed.startsWith('[');
+}
+
+function parseJsonText(text) {
+  if (!isJsonText(text)) return undefined;
+  try { return JSON.parse(text); } catch { return undefined; }
+}
+
+function evaluateBusinessResult(body, parsedBody = undefined) {
+  if (typeof body !== 'string' || !isJsonText(body)) {
     return { state: 'unknown', reason: '' };
   }
 
-  let data;
-  try { data = JSON.parse(trimmed); } catch { return { state: 'unknown', reason: '' }; }
+  const data = parsedBody === undefined ? parseJsonText(body) : parsedBody;
+  if (data === undefined) return { state: 'unknown', reason: '' };
   if (!data || Array.isArray(data) || typeof data !== 'object') {
     return { state: 'unknown', reason: '' };
   }
@@ -292,12 +307,6 @@ function decodeContent(content, encoding) {
   }
 }
 
-function truncate(text) {
-  if (!text) return '';
-  if (text.length <= MAX_CONTENT_CHARS) return text;
-  return `${text.slice(0, MAX_CONTENT_CHARS)}\n\n${t('contentTruncated', MAX_CONTENT_CHARS.toLocaleString())}`;
-}
-
 function addRequest(request) {
   if (!request?.request?.url) return;
   if (isIgnoredRequestUrl(request.request.url)) return;
@@ -323,6 +332,9 @@ function addRequest(request) {
     startedDateTime: request.startedDateTime || '',
     responseBody: t('loadingResponse'),
     responseEncoding: '',
+    // 响应 JSON 只解析一次，预览、搜索和排序复用同一份数据。
+    parsedResponseJson: undefined,
+    responseJsonParsed: false,
     businessState: 'pending',
     businessReason: '',
   };
@@ -333,17 +345,23 @@ function addRequest(request) {
     if (removed?.id === state.selectedId) state.selectedId = null;
   }
 
-  render();
+  renderRequestList();
 
   if (typeof request.getContent === 'function') {
     request.getContent((content, encoding) => {
       record.responseEncoding = encoding || '';
-      record.responseBody = truncate(decodeContent(content || '', encoding));
+      const decodedContent = decodeContent(content || '', encoding);
+      const parsedJson = parseJsonText(decodedContent);
+      // 完整响应正文始终保留；JSON 缓存解析结果，树节点按需创建。
+      record.responseBody = decodedContent;
+      record.parsedResponseJson = parsedJson;
+      record.responseJsonParsed = parsedJson !== undefined;
       if (!content) record.responseBody = t('noReadableResponse');
-      const business = evaluateBusinessResult(record.responseBody);
+      const business = evaluateBusinessResult(record.responseBody, parsedJson);
       record.businessState = business.state;
       record.businessReason = business.reason;
-      render();
+      renderRequestList();
+      renderDetailIfSelected(record.id);
     });
   } else {
     record.responseBody = t('unsupportedResponse');
@@ -380,6 +398,14 @@ function tryPretty(text, mimeType = '') {
   return text;
 }
 
+function getResponseJson(record, text) {
+  if (record.responseJsonParsed) return record.parsedResponseJson;
+
+  record.responseJsonParsed = true;
+  record.parsedResponseJson = parseJsonText(text);
+  return record.parsedResponseJson;
+}
+
 function getRequestBody(record) {
   const postData = record.postData;
   if (!postData) return '';
@@ -392,6 +418,73 @@ function getRequestBody(record) {
     return JSON.stringify(obj, null, 2);
   }
   return '';
+}
+
+function isFormDataMimeType(mimeType = '') {
+  const normalized = mimeType.toLowerCase();
+  return normalized.includes('multipart/form-data') || normalized.includes('application/x-www-form-urlencoded');
+}
+
+function createFormDataItem(param = {}) {
+  const fileName = param.fileName || param.filename || '';
+  return {
+    name: param.name || '',
+    value: param.value ?? '',
+    fileName,
+    contentType: param.contentType || '',
+    fileSize: Number.isFinite(Number(param.fileSize ?? param.size)) ? Number(param.fileSize ?? param.size) : null,
+    isFile: Boolean(fileName),
+  };
+}
+
+function formatFileSize(size) {
+  if (size === null || size === undefined) return '';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function parseUrlEncodedFormData(text) {
+  return [...new URLSearchParams(text)].map(([name, value]) => createFormDataItem({ name, value }));
+}
+
+function parseMultipartFormData(text, mimeType) {
+  const boundaryMatch = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(mimeType);
+  const boundary = boundaryMatch?.[1] || boundaryMatch?.[2];
+  if (!boundary) return [];
+
+  const parts = text.split(`--${boundary}`);
+  const fields = [];
+  for (const part of parts) {
+    const normalized = part.replace(/^\r?\n|\r?\n--$/g, '');
+    const separatorIndex = normalized.search(/\r?\n\r?\n/);
+    if (separatorIndex < 0) continue;
+
+    const headers = normalized.slice(0, separatorIndex);
+    const content = normalized.slice(separatorIndex).replace(/^\r?\n\r?\n/, '').replace(/\r?\n$/, '');
+    const disposition = /content-disposition:\s*form-data;([^\r\n]+)/i.exec(headers)?.[1] || '';
+    const name = /name="([^"]*)"/i.exec(disposition)?.[1] || '';
+    if (!name) continue;
+    const fileName = /filename="([^"]*)"/i.exec(disposition)?.[1] || '';
+    const contentType = /content-type:\s*([^\r\n]+)/i.exec(headers)?.[1]?.trim() || '';
+    fields.push(createFormDataItem({ name, value: fileName ? '' : content, fileName, contentType }));
+  }
+  return fields;
+}
+
+// DevTools 的 postData.params 可直接提供表单字段；缺失时再解析可读取的标准表单文本。
+function getFormDataItems(record) {
+  const postData = record?.postData;
+  if (!postData || !isFormDataMimeType(postData.mimeType || '')) return null;
+
+  if (Array.isArray(postData.params)) return postData.params.map(createFormDataItem);
+
+  const text = postData.text || '';
+  if (!text) return [];
+  if (postData.mimeType.toLowerCase().includes('application/x-www-form-urlencoded')) {
+    return parseUrlEncodedFormData(text);
+  }
+  return parseMultipartFormData(text, postData.mimeType);
 }
 
 // 请求参数面板优先按 JSON 展示，表单参数转为键值对象，其他正文保留原文。
@@ -750,7 +843,7 @@ function createRowCopyButton(kind, title, onCopy) {
   return button;
 }
 
-function render() {
+function renderRequestList() {
   const records = filteredRecords();
   // 按请求发起时间从早到晚展示；缺少时间时使用采集顺序兜底。
   const displayRecords = recordsInDisplayOrder(records);
@@ -824,7 +917,10 @@ function render() {
       el.requestList.appendChild(row);
     }
   }
+}
 
+function render() {
+  renderRequestList();
   renderDetail();
 }
 
@@ -1045,26 +1141,75 @@ function preservePreviewOpenStates(record) {
   state.previewOpenStates = getPreviewOpenStates();
 }
 
+function normalizeSummaryKey(key) {
+  return String(key).replace(/[\s_-]/g, '').toLowerCase();
+}
+
+function isTechnicalSummaryKey(key) {
+  return /^(create|created|update|updated|modify|modified|delete|deleted|audit)/.test(key)
+    || /(time|date|timestamp|version)$/.test(key);
+}
+
 function summaryEntryPriority(key) {
-  const normalized = String(key).toLowerCase();
-  if (normalized.includes('name')) return 0;
-  if (normalized === 'id' || normalized.endsWith('id')) return 1;
-  return 2;
+  const normalized = normalizeSummaryKey(key);
+  // 创建人、更新时间等技术字段仅在没有其他可用字段时作为兜底展示。
+  if (isTechnicalSummaryKey(normalized)) return 100;
+  if (normalized === 'name' || normalized.endsWith('name') || normalized.endsWith('names')
+    || normalized === 'title' || normalized.endsWith('title') || normalized.endsWith('label')) return 0;
+  if (normalized === 'code' || normalized.endsWith('code')) return 1;
+  if (normalized === 'id' || normalized.endsWith('id')) return 2;
+  if (normalized === 'status' || normalized.endsWith('status') || normalized.endsWith('state')) return 3;
+  return 10;
+}
+
+function summaryEntrySpecificity(key) {
+  const normalized = normalizeSummaryKey(key);
+  // 同类字段中，优先精确名称和单数名称，避免 Names 等集合字段占满整段摘要。
+  if (normalized === 'name' || normalized === 'title' || normalized === 'label' || normalized === 'displayname') return 0;
+  if (normalized.endsWith('names')) return 2;
+  if (normalized.endsWith('name') || normalized.endsWith('title') || normalized.endsWith('label')) return 1;
+  if (normalized === 'code' || normalized === 'id' || normalized === 'status' || normalized === 'state') return 0;
+  return 1;
+}
+
+function canUseInJsonSummary(value) {
+  if (value === null || typeof value === 'object') return false;
+  return typeof value !== 'string' || value.trim() !== '';
 }
 
 function appendJsonSummaryPreview(parent, value) {
   if (Array.isArray(value) || !value || typeof value !== 'object') return;
 
-  // 摘要优先展示名称和标识字段，其余字段沿用当前 JSON 排序方式。
-  const entries = sortedEntries(value)
+  // 摘要不受字母排序影响：按名称、编码、ID、状态、原始字段的业务优先级稳定展示。
+  const primitiveEntries = Object.entries(value)
     .map(([key, childValue], index) => ({ key, childValue, index }))
-    .sort((a, b) => summaryEntryPriority(a.key) - summaryEntryPriority(b.key) || a.index - b.index)
-    .map(({ key, childValue }) => [key, childValue]);
+    .filter(({ childValue }) => canUseInJsonSummary(childValue));
+  // 基础字段缺失时才回退到对象或数组，保证折叠节点仍有可识别的信息。
+  const sourceEntries = primitiveEntries.length
+    ? primitiveEntries
+    : Object.entries(value).map(([key, childValue], index) => ({ key, childValue, index }));
+  const sortedEntries = sourceEntries.sort((a, b) => {
+    const priorityDifference = summaryEntryPriority(a.key) - summaryEntryPriority(b.key);
+    if (priorityDifference) return priorityDifference;
+    return summaryEntrySpecificity(a.key) - summaryEntrySpecificity(b.key) || a.index - b.index;
+  });
+  const entries = [];
+  const usedBusinessCategories = new Set();
+  // 摘要由可用行宽自然截断，字段数量只保留性能上限，避免大数组创建过多节点。
+  const maxEntries = 12;
+
+  for (const entry of sortedEntries) {
+    const priority = summaryEntryPriority(entry.key);
+    // 名称、编码、ID、状态各保留一个，避免同类长字段遮住后续关键信息。
+    if (priority <= 3 && usedBusinessCategories.has(priority)) continue;
+    if (priority <= 3) usedBusinessCategories.add(priority);
+    entries.push([entry.key, entry.childValue]);
+    if (entries.length === maxEntries) break;
+  }
   if (!entries.length) return;
 
   const preview = document.createElement('span');
   preview.className = 'json-summary-preview';
-  const maxEntries = 3;
 
   for (const [index, [childKey, childValue]] of entries.slice(0, maxEntries).entries()) {
     if (index) preview.appendChild(document.createTextNode(', '));
@@ -1085,8 +1230,53 @@ function appendJsonSummaryPreview(parent, value) {
     preview.appendChild(valueEl);
   }
 
-  if (entries.length > maxEntries) preview.appendChild(document.createTextNode(', …'));
+  if (entries.length === maxEntries && sortedEntries.length > entries.length) {
+    preview.appendChild(document.createTextNode(', …'));
+  }
   parent.appendChild(preview);
+}
+
+function escapeJsonPathSegment(key) {
+  return String(key).replaceAll('~', '~0').replaceAll('/', '~1');
+}
+
+function getDefaultNodeOpen(value, key, depth) {
+  if (depth === 0) return true;
+  // 大型 data 数组默认折叠，避免刚打开预览就创建数千个节点。
+  return depth === 1 && key === 'data' && (!Array.isArray(value) || value.length <= MAX_VISIBLE_ARRAY_ITEMS);
+}
+
+function buildArrayRangeNode(entries, start, end, depth, query, openStates, path) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'json-node json-array-range';
+
+  const details = document.createElement('details');
+  details.className = 'json-details';
+  details.dataset.jsonPath = path;
+  details.open = openStates?.get(path) ?? false;
+
+  const summary = document.createElement('summary');
+  summary.className = 'json-summary json-range-summary';
+  // 与 Chrome DevTools 一致，直接使用数组下标范围表达分组。
+  summary.textContent = `[${start} … ${end}]`;
+  details.appendChild(summary);
+
+  const populate = () => {
+    if (details.dataset.childrenRendered) return;
+    details.dataset.childrenRendered = 'true';
+    for (const [childKey, childValue] of entries.slice(start, end + 1)) {
+      const childPath = `${path}/${escapeJsonPathSegment(childKey)}`;
+      details.appendChild(buildJsonNode(childValue, childKey, depth + 1, query, openStates, childPath));
+    }
+  };
+
+  details.addEventListener('toggle', () => {
+    if (details.open) populate();
+  });
+  if (details.open) populate();
+
+  wrapper.appendChild(details);
+  return wrapper;
 }
 
 function buildJsonNode(value, key = null, depth = 0, query = '', openStates = null, path = '') {
@@ -1105,45 +1295,70 @@ function buildJsonNode(value, key = null, depth = 0, query = '', openStates = nu
   const details = document.createElement('details');
   details.className = 'json-details';
   details.dataset.jsonPath = path;
-  const defaultOpen = depth === 0 || (depth === 1 && key === 'data');
   // 搜索仅强制展开命中节点及其父级路径，未命中节点保留搜索前的展开状态。
   details.open = query && nodeMatches(value, key, query)
     ? true
-    : openStates?.get(path) ?? defaultOpen;
+    : openStates?.get(path) ?? getDefaultNodeOpen(value, key, depth);
 
   const summary = document.createElement('summary');
   summary.className = 'json-summary';
   if (keyMatched) summary.classList.add('json-match');
 
+  // 让键、类型和折叠摘要共享一段可伸缩行宽，避免摘要按内容宽度提前截断。
+  const summaryContent = document.createElement('span');
+  summaryContent.className = 'json-summary-content';
+
   if (key !== null) {
     const keyEl = document.createElement('span');
     keyEl.className = 'json-key';
     keyEl.textContent = `${String(key)}: `;
-    summary.appendChild(keyEl);
+    summaryContent.appendChild(keyEl);
   }
 
   const type = document.createElement('span');
   type.className = 'json-type json-summary-count';
-  type.textContent = isArray ? `Array [${allEntries.length}]` : `Object {${allEntries.length}}`;
-  summary.appendChild(type);
-  appendJsonSummaryPreview(summary, value);
+  // 使用 DevTools 风格的紧凑标识，保留元素或字段数量但不重复显示类型名称。
+  type.textContent = isArray ? `[${allEntries.length}]` : `{${allEntries.length}}`;
+  summaryContent.appendChild(type);
+  appendJsonSummaryPreview(summaryContent, value);
+  summary.appendChild(summaryContent);
 
   const actions = createFieldActions(key, value);
   if (actions) summary.appendChild(actions);
-
   details.appendChild(summary);
 
-  if (allEntries.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'json-node json-empty';
-    empty.textContent = isArray ? '[]' : '{}';
-    details.appendChild(empty);
-  } else {
+  const populate = () => {
+    if (details.dataset.childrenRendered) return;
+    details.dataset.childrenRendered = 'true';
+
+    if (allEntries.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'json-node json-empty';
+      empty.textContent = isArray ? '[]' : '{}';
+      details.appendChild(empty);
+      return;
+    }
+
+    // 大数组按范围分组，单次最多创建一个范围内的节点。
+    if (isArray && allEntries.length > MAX_VISIBLE_ARRAY_ITEMS && !query) {
+      for (let start = 0; start < allEntries.length; start += ARRAY_GROUP_SIZE) {
+        const end = Math.min(start + ARRAY_GROUP_SIZE - 1, allEntries.length - 1);
+        const rangePath = `${path}/@${start}-${end}`;
+        details.appendChild(buildArrayRangeNode(allEntries, start, end, depth, query, openStates, rangePath));
+      }
+      return;
+    }
+
     for (const [childKey, childValue] of allEntries) {
-      const childPath = `${path}/${String(childKey).replaceAll('~', '~0').replaceAll('/', '~1')}`;
+      const childPath = `${path}/${escapeJsonPathSegment(childKey)}`;
       details.appendChild(buildJsonNode(childValue, childKey, depth + 1, query, openStates, childPath));
     }
-  }
+  };
+
+  details.addEventListener('toggle', () => {
+    if (details.open) populate();
+  });
+  if (details.open) populate();
 
   wrapper.appendChild(details);
   return wrapper;
@@ -1177,7 +1392,7 @@ function appendHighlightedRaw(parent, text, query) {
   if (cursor < text.length) parent.appendChild(document.createTextNode(text.slice(cursor)));
 }
 
-function appendRequestParamSection(title, value, emptyText, count = null) {
+function appendRequestParamSection(title, value, count = null) {
   const section = document.createElement('section');
   section.className = 'request-param-section';
 
@@ -1192,17 +1407,13 @@ function appendRequestParamSection(title, value, emptyText, count = null) {
   }
   section.appendChild(heading);
 
-  if (value === null) {
-    const empty = document.createElement('div');
-    empty.className = 'request-param-empty';
-    empty.textContent = emptyText;
-    section.appendChild(empty);
-  } else if (typeof value === 'string') {
+  // 空参数仅保留标题和计数，避免重复的空状态文案占用面板高度。
+  if (typeof value === 'string') {
     const raw = document.createElement('pre');
     raw.className = 'request-param-raw';
     raw.textContent = value;
     section.appendChild(raw);
-  } else {
+  } else if (value !== null) {
     const jsonNode = buildJsonNode(value);
     jsonNode.classList.add('request-param-json');
     section.appendChild(jsonNode);
@@ -1224,12 +1435,7 @@ function appendQueryParameters(queryItems) {
   heading.appendChild(badge);
   section.appendChild(heading);
 
-  if (!queryItems.length) {
-    const empty = document.createElement('div');
-    empty.className = 'request-param-empty';
-    empty.textContent = t('noQueryParameters');
-    section.appendChild(empty);
-  } else {
+  if (queryItems.length) {
     const list = document.createElement('div');
     list.className = 'request-query-list';
     for (const item of queryItems) {
@@ -1241,6 +1447,46 @@ function appendQueryParameters(queryItems) {
       const value = document.createElement('span');
       value.className = 'request-query-value';
       value.textContent = item.value ?? '';
+      row.append(key, value);
+      list.appendChild(row);
+    }
+    section.appendChild(list);
+  }
+
+  el.requestParamsContent.appendChild(section);
+}
+
+function appendFormDataParameters(items) {
+  const section = document.createElement('section');
+  section.className = 'request-param-section';
+
+  const heading = document.createElement('div');
+  heading.className = 'request-param-title';
+  heading.textContent = t('formData');
+  const badge = document.createElement('span');
+  badge.className = 'request-param-count';
+  badge.textContent = String(items.length);
+  heading.appendChild(badge);
+  section.appendChild(heading);
+
+  if (items.length) {
+    const list = document.createElement('div');
+    list.className = 'request-query-list request-form-data-list';
+    for (const item of items) {
+      const row = document.createElement('div');
+      row.className = 'request-query-row';
+      const key = document.createElement('span');
+      key.className = 'request-query-key';
+      key.textContent = item.name;
+      const value = document.createElement('span');
+      value.className = 'request-query-value';
+
+      if (item.isFile) {
+        const fileInfo = [t('formDataFile', item.fileName), item.contentType, formatFileSize(item.fileSize)].filter(Boolean);
+        value.textContent = fileInfo.join(' · ');
+      } else {
+        value.textContent = item.value;
+      }
       row.append(key, value);
       list.appendChild(row);
     }
@@ -1263,13 +1509,18 @@ function renderRequestParameters(record) {
   }
 
   const queryItems = filteredQueryItems(record);
-  const body = getRequestBodyValue(record);
+  const formDataItems = getFormDataItems(record);
+  const body = formDataItems === null ? getRequestBodyValue(record) : formDataItems;
   el.requestParamsMeta.textContent = t('parameterSummary', [
     queryItems.length,
     body === null ? t('bodyAbsent') : t('bodyPresent'),
   ]);
   appendQueryParameters(queryItems);
-  appendRequestParamSection(t('requestBody'), body, t('noRequestBody'));
+  if (formDataItems !== null) {
+    appendFormDataParameters(formDataItems);
+  } else {
+    appendRequestParamSection(t('requestBody'), body);
+  }
 }
 
 function clearPreviewSearchMatches() {
@@ -1322,7 +1573,6 @@ function renderPreview(record) {
   el.previewContent.innerHTML = '';
   clearPreviewSearchMatches();
   const raw = record.responseBody || '';
-  const pretty = tryPretty(raw, record.mimeType);
   const trimmed = typeof raw === 'string' ? raw.trim() : '';
   const query = el.previewSearchInput.value.trim().toLowerCase();
   // 搜索和清空搜索时都沿用原有展开状态，仅对命中路径作额外展开。
@@ -1338,8 +1588,8 @@ function renderPreview(record) {
   }
 
   if (record.mimeType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try {
-      const data = JSON.parse(trimmed);
+    const data = getResponseJson(record, trimmed);
+    if (data !== undefined) {
       if (query && !nodeMatches(data, null, query)) {
         const placeholder = document.createElement('div');
         placeholder.className = 'preview-placeholder';
@@ -1351,10 +1601,10 @@ function renderPreview(record) {
       state.previewRecordId = record.id;
       renderPreviewSearchMatches(query);
       return;
-    } catch {}
+    }
   }
 
-  const rawText = pretty || t('emptyResponse');
+  const rawText = tryPretty(raw, record.mimeType) || t('emptyResponse');
   if (query && !rawText.toLowerCase().includes(query)) {
     const placeholder = document.createElement('div');
     placeholder.className = 'preview-placeholder';
@@ -1433,7 +1683,11 @@ el.previewSearchInput.addEventListener('input', () => {
   }
   state.previewSearchQuery = query;
   state.previewMatchIndex = query ? 0 : -1;
-  renderDetail();
+  clearTimeout(state.previewSearchTimer);
+  state.previewSearchTimer = setTimeout(() => {
+    state.previewSearchTimer = null;
+    renderDetail();
+  }, PREVIEW_SEARCH_DELAY);
 });
 el.previewMatchPrevBtn.addEventListener('click', () => setPreviewMatchIndex(state.previewMatchIndex - 1));
 el.previewMatchNextBtn.addEventListener('click', () => setPreviewMatchIndex(state.previewMatchIndex + 1));
@@ -1759,7 +2013,7 @@ el.requestParamsSplitter.addEventListener('pointerup', endRequestParamsResize);
 el.requestParamsSplitter.addEventListener('pointercancel', endRequestParamsResize);
 
 // 普通网页预览使用本地样例走同一套渲染流程，不发送任何模拟网络请求。
-function loadPreviewRequests() {
+async function loadPreviewRequests() {
   // 响应字段故意不按字母排列，便于检查排序切换、搜索和复杂值展示。
   const samples = [
     {
@@ -1774,6 +2028,18 @@ function loadPreviewRequests() {
       path: '/api/projects/create', method: 'POST', status: 200, time: 245,
       requestBody: { name: '接口调试工具', owner: '示例用户', tags: ['前端', '开发工具'] },
       body: { isSuccess: true, message: '创建成功', code: 200, data: { id: 'demo-1025', name: '接口调试工具', createdAt: '2026-09-12 10:30:00' } },
+    },
+    {
+      path: '/api/projects/upload', method: 'POST', status: 200, time: 418,
+      postData: {
+        mimeType: 'multipart/form-data; boundary=----ApiCopyDemoBoundary',
+        params: [
+          { name: 'projectId', value: 'demo-1025' },
+          { name: 'remark', value: '项目需求说明' },
+          { name: 'attachment', fileName: '需求说明.pdf', contentType: 'application/pdf', fileSize: 248_576 },
+        ],
+      },
+      body: { isSuccess: true, message: '上传成功', code: 200, data: { fileId: 'file-demo-1' } },
     },
     {
       path: '/api/projects/demo-1025', method: 'PUT', status: 200, time: 132,
@@ -1805,6 +2071,20 @@ function loadPreviewRequests() {
     },
   ];
 
+  try {
+    // 使用脱敏的大响应 fixture 验证性能；它不进入扩展安装包。
+    const response = await fetch('./fixtures/large-cost-analysis-response.json', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Failed to load large response fixture: ${response.status}`);
+    samples.push({
+      path: '/his/his/vehicleFunction/cost/analysis/list', method: 'POST', status: 200, time: 1864,
+      requestBody: { vehicleCode: 'P567', versionId: '23' },
+      body: await response.json(),
+    });
+  } catch (error) {
+    // fixture 缺失不影响正常预览，方便只打开单个 HTML 文件进行样式调试。
+    console.warn('Unable to load large response fixture.', error);
+  }
+
   for (const sample of samples) {
     // 使用保留域名和明确的假 Token，复制结果也不会包含真实凭据。
     const url = new URL(sample.path, 'https://api.example.test');
@@ -1816,7 +2096,7 @@ function loadPreviewRequests() {
         url: url.href, method: sample.method,
         headers: [{ name: 'Authorization', value: 'Bearer demo-token-not-a-real-credential' }],
         queryString: [...url.searchParams].map(([name, value]) => ({ name, value })),
-        postData: sample.requestBody ? { mimeType: 'application/json', text: JSON.stringify(sample.requestBody) } : null,
+        postData: sample.postData || (sample.requestBody ? { mimeType: 'application/json', text: JSON.stringify(sample.requestBody) } : null),
       },
       response: {
         status: sample.status, statusText: sample.status === 200 ? 'OK' : 'Internal Server Error',
@@ -1827,7 +2107,7 @@ function loadPreviewRequests() {
       },
     });
   }
-  // 默认选中包含嵌套对象和数组的列表响应，打开预览即可查看 JSON。
+  // 默认选中最后一条样例；本地服务可用时即为大响应，便于性能调试。
   selectRecord(state.records[state.records.length - 1].id);
 }
 
@@ -1844,7 +2124,7 @@ if (globalThis.chrome?.devtools?.network) {
   previewBadge.className = 'count-badge';
   previewBadge.textContent = t('previewData');
   document.querySelector('.panel-title').appendChild(previewBadge);
-  loadPreviewRequests();
+  void loadPreviewRequests();
 }
 
 render();
