@@ -157,7 +157,7 @@ api-copy-devtools/
 会生成：
 
 ```text
-dist/api-copy-devtools-v0.4.0.zip
+dist/api-copy-devtools-v0.4.1.zip
 ```
 
 ZIP 根目录直接包含 `manifest.json`，后续可用于 Chrome Web Store 上传。

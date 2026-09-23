@@ -157,7 +157,7 @@ Run:
 Output:
 
 ```text
-dist/api-copy-devtools-v0.4.0.zip
+dist/api-copy-devtools-v0.4.1.zip
 ```
 
 The ZIP root contains `manifest.json` directly and can be uploaded to the Chrome Web Store.

@@ -4,6 +4,11 @@
 
 All notable changes to API Copy are documented here.
 
+## 0.4.1 - 2026-09-23
+
+- Fixed percent-encoded Chinese text in Query parameters, URL-encoded forms, and optionally displayed request paths and Query strings.
+- Kept URL encoding intact in copied raw requests so copied addresses remain usable.
+
 ## 0.4.0 - 2026-09-23
 
 - Improved large JSON Preview handling, preserving complete responses and creating tree nodes on demand.

@@ -477,7 +477,12 @@ function getFormDataItems(record) {
   const postData = record?.postData;
   if (!postData || !isFormDataMimeType(postData.mimeType || '')) return null;
 
-  if (Array.isArray(postData.params)) return postData.params.map(createFormDataItem);
+  if (Array.isArray(postData.params)) {
+    const isUrlEncoded = postData.mimeType.toLowerCase().includes('application/x-www-form-urlencoded');
+    return postData.params.map(param => createFormDataItem(isUrlEncoded
+      ? { ...param, name: decodeUrlComponent(param.name), value: decodeUrlComponent(param.value) }
+      : param));
+  }
 
   const text = postData.text || '';
   if (!text) return [];
@@ -547,6 +552,27 @@ function formatRecord(record) {
 
 function normalizeIgnoredParamName(name) {
   return String(name || '').trim().toLowerCase();
+}
+
+function decodeUrlComponent(value) {
+  const text = String(value ?? '');
+  try {
+    // Network 元数据中的 Query 值可能仍是百分号编码；只解码一次，坏编码则保留原文。
+    return decodeURIComponent(text.replace(/\+/g, ' '));
+  } catch {
+    return text;
+  }
+}
+
+function decodeUrlPath(pathname) {
+  try { return decodeURI(pathname); } catch { return pathname; }
+}
+
+function formatReadableSearch(search) {
+  if (!search) return '';
+  const params = new URLSearchParams(search);
+  const readable = [...params].map(([name, value]) => `${name}=${value}`).join('&');
+  return readable ? `?${readable}` : '';
 }
 
 function getIgnoredParamSet() {
@@ -638,7 +664,13 @@ function filterUrlQuery(rawUrl) {
 }
 
 function filteredQueryItems(record) {
-  return (record.queryString || []).filter(item => !isIgnoredQueryParam(item.name));
+  return (record.queryString || [])
+    .map(item => ({
+      ...item,
+      name: decodeUrlComponent(item.name),
+      value: item.value == null ? item.value : decodeUrlComponent(item.value),
+    }))
+    .filter(item => !isIgnoredQueryParam(item.name));
 }
 
 function getSimpleUrl(rawUrl) {
@@ -757,7 +789,7 @@ function getDisplayUrl(rawUrl, includeQuery = state.showUrlQuery) {
   const filteredUrl = filterUrlQuery(rawUrl);
   try {
     const url = new URL(filteredUrl);
-    return `${trimDisplayPath(url.pathname || '/')}${includeQuery ? url.search || '' : ''}`;
+    return `${trimDisplayPath(decodeUrlPath(url.pathname || '/'))}${includeQuery ? formatReadableSearch(url.search) : ''}`;
   } catch {
     const value = String(filteredUrl || '');
     const queryIndex = value.indexOf('?');
