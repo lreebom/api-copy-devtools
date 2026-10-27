@@ -1,10 +1,17 @@
 :root {
   color-scheme: light dark;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 13px;
+  font-size: 12px;
+  --font-content: 11px;
+  --font-request-path: 12px;
+  --font-meta: 9px;
+  --request-row-height: 26px;
+  --json-line-height: 17px;
+  --json-indent: 12px;
+  --control-height: 24px;
   --list-width: 40%;
   --list-height: 40%;
-  --request-list-size: 70%;
+  --request-list-size: 65%;
   --border: color-mix(in srgb, CanvasText 14%, transparent);
   --border-soft: color-mix(in srgb, CanvasText 8%, transparent);
   --muted: color-mix(in srgb, CanvasText 62%, transparent);
@@ -26,17 +33,23 @@ button, input { font: inherit; }
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
-.toolbar-main, .toolbar-actions, .toolbar-left, .toolbar-utility { display: flex; align-items: center; }
-.toolbar-main { min-height: 32px; padding: 6px 10px; gap: 10px; }
-.toolbar-left { min-width: 0; flex: 1; gap: 10px; }
+.toolbar-actions, .toolbar-utility { display: flex; align-items: center; }
+.toolbar-main {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "title filter utility"; align-items: center;
+  min-height: 30px; padding: 4px 8px; gap: 8px;
+}
+.toolbar-main > .panel-title { grid-area: title; }
+.toolbar-main > .filter-wrap { grid-area: filter; min-width: 0; }
+.toolbar-main > .toolbar-utility { grid-area: utility; }
 .toolbar-utility { flex: 0 0 auto; gap: 4px; }
 .toolbar-actions {
-  padding: 6px 10px; gap: 4px;
+  padding: 4px 8px; gap: 4px;
   border-top: 1px solid var(--border-soft); background: var(--surface-subtle);
 }
 .panel-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; white-space: nowrap; }
 .panel-mark {
-  width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
   border-radius: 6px; color: white; background: var(--accent);
   font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, white 16%, transparent);
@@ -45,7 +58,7 @@ button, input { font: inherit; }
 .button-group { display: inline-flex; flex-wrap: wrap; max-width: 100%; align-items: center; gap: 4px; }
 .filter-wrap { position: relative; flex: 1; min-width: 120px; max-width: 420px; }
 .filter {
-  width: 100%; height: 26px; padding: 0 32px 0 8px;
+  width: 100%; height: var(--control-height); padding: 0 32px 0 8px;
   border: 1px solid var(--border); border-radius: 6px;
   background: Field; color: FieldText; outline: none;
 }
@@ -60,49 +73,27 @@ button, input { font: inherit; }
 .filter-clear:hover:not(:disabled) { color: CanvasText; background: var(--hover); }
 .filter:focus, .preview-search:focus, .preview-sort:focus { border-color: color-mix(in srgb, var(--accent) 70%, CanvasText 15%); }
 button {
-  border-radius: 6px;
-  padding: 3px 6px 4px 4px !important;
-  font-size: 12px !important;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: inherit;
   border: 1px solid var(--border);
   background: ButtonFace; color: ButtonText; cursor: pointer; white-space: nowrap;
-  title { display: none; }
 }
 button:hover:not(:disabled) { background: var(--hover); }
-button:active:not(:disabled) { transform: translateY(1px); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 button:disabled { opacity: .42; cursor: default; }
 .icon-svg {
-  width: 16px; height: 16px; display: block; flex: 0 0 auto;
+  width: 14px; height: 14px; display: block; flex: 0 0 auto;
   fill: none; stroke: currentColor; stroke-width: 1.8;
   stroke-linecap: round; stroke-linejoin: round;
 }
 button.ghost { opacity: .78; }
 
-.param-filter-panel[hidden] { display: none !important; }
-.param-filter-panel {
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, Canvas 97%, CanvasText 3%);
-}
-.filter-settings-content { min-width: 0; display: flex; flex: 1; flex-direction: column; gap: 6px; }
-.filter-setting-row { min-width: 0; display: grid; grid-template-columns: 110px minmax(180px, 360px) minmax(180px, 1fr); align-items: center; gap: 8px; }
-.param-filter-label { font-size: 12px; font-weight: 600; white-space: nowrap; }
-.filter-setting-input {
-  width: 100%; height: 28px; padding: 0 8px;
-  border: 1px solid var(--border); border-radius: 5px;
-  background: Field; color: FieldText; outline: none; font-size: 12px;
-}
-.filter-setting-input:focus { border-color: color-mix(in srgb, var(--accent) 70%, CanvasText 15%); }
-.path-prefix-input { max-width: 96px; }
-.setting-checkbox { display: inline-flex; align-items: center; gap: 6px; height: 28px; font-size: 12px; }
-.setting-checkbox input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
-.param-filter-help { color: var(--muted); font-size: 11px; min-width: 0; flex: 1; }
-.param-filter-help code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
+button.compact { height: 24px; padding: 0 6px; font-size: 12px; }
 
 .content { display: flex; min-height: 0; min-width: 0; flex: 1; overflow: hidden; }
 .list-pane {
-  width: var(--list-width); min-width: 230px; max-width: calc(100% - 256px);
+  width: var(--list-width); min-width: min(230px, 35%); max-width: calc(100% - min(256px, 45%));
   display: flex; flex-direction: column; overflow: hidden;
   background: Canvas;
 }
@@ -111,7 +102,7 @@ button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
   display: flex; flex-direction: column; overflow: hidden;
 }
 .list-header, .detail-header {
-  min-height: 32px; padding: 2px 8px; display: flex; align-items: center; justify-content: space-between;
+  min-height: 28px; padding: 2px 6px; display: flex; align-items: center; justify-content: space-between;
   border-bottom: 1px solid var(--border-soft);
 }
 .list-header { font-size: 13px; font-weight: 650; background: var(--surface-subtle); }
@@ -119,45 +110,48 @@ button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
 .list-clear-btn { height: 24px; }
 .list-clear-btn .icon-svg { color: #d93025; }
 .count-badge {
-  font-weight: 500; font-size: 11px; line-height: 20px; height: 20px; padding: 0 7px;
+  font-weight: 500; font-size: 11px; line-height: 18px; height: 18px; padding: 0 6px;
   border-radius: 10px; background: color-mix(in srgb, CanvasText 7%, transparent); color: var(--muted);
 }
 .list-columns {
-  display: grid; grid-template-columns: 12px 26px minmax(0, 1fr); gap: 6px;
-  min-height: 25px; padding: 4px 8px;
+  display: grid; grid-template-columns: 16px 26px minmax(0, 1fr); gap: 4px;
+  min-height: var(--json-line-height); padding: 2px 6px;
   border-bottom: 1px solid var(--border-soft);
-  color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .2px;
+  color: var(--muted); font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .2px;
 }
-.request-list { overflow: auto; flex: 1; font-size: 13px; }
+.request-list { overflow: auto; flex: 1; font-size: var(--font-request-path); }
 .request-row {
-  display: grid; grid-template-columns: 12px 26px minmax(0, 1fr); gap: 6px; align-items: center;
-  min-height: 32px; padding: 0 2px 0 8px;
-  border-bottom: 1px solid var(--border-soft); cursor: pointer;
+  /* 行与工具组复用不透明底色，覆盖路径时不产生叠色或白色块。 */
+  --request-row-selected-bg: color-mix(in srgb, var(--accent) 14%, Canvas);
+  --request-row-bg: Canvas;
+  display: grid; grid-template-columns: 16px 26px minmax(0, 1fr); gap: 4px; align-items: center;
+  height: var(--request-row-height); padding: 1px 2px 1px 6px;
+  border-bottom: 1px solid var(--border-soft); background: var(--request-row-bg); cursor: pointer;
 }
 .request-index {
-  color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums;
+  color: var(--muted); font-size: var(--font-meta); font-variant-numeric: tabular-nums;
   text-align: center; user-select: none;
 }
-.request-row:hover { background: var(--hover); }
-.request-row.business-failed { background: color-mix(in srgb, #d93025 7%, Canvas); }
-.request-row.business-failed:hover { background: color-mix(in srgb, #d93025 11%, Canvas); }
-.request-row.selected { background: var(--selected); box-shadow: inset 2px 0 0 var(--accent); }
-.request-row.selected.business-failed { background: color-mix(in srgb, #d93025 9%, var(--selected)); }
+.request-row:hover { --request-row-bg: color-mix(in srgb, CanvasText 6%, Canvas); }
+.request-row.business-failed { --request-row-bg: color-mix(in srgb, #d93025 7%, Canvas); }
+.request-row.business-failed:hover { --request-row-bg: color-mix(in srgb, #d93025 11%, Canvas); }
+.request-row.selected { --request-row-bg: var(--request-row-selected-bg); box-shadow: inset 2px 0 0 var(--accent); }
+.request-row.selected.business-failed { --request-row-bg: color-mix(in srgb, #d93025 9%, var(--request-row-selected-bg)); }
 .request-meta, .request-meta-heading {
-  display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 1px; line-height: 1;
+  display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 0; line-height: 10px;
 }
 .request-meta-heading { gap: 1px; font-size: 9px; }
-.method { max-width: 100%; font-size: 9px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
-.status { max-width: 100%; font-size: 9px; font-variant-numeric: tabular-nums; }
+.method { max-width: 100%; font-size: var(--font-meta); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.status { max-width: 100%; font-size: var(--font-meta); font-variant-numeric: tabular-nums; }
 .status.ok { color: #188038; }
 .status.bad { color: #d93025; }
 .url-cell { min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; }
 .url { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .business-fail-badge {
-  flex: 0 0 auto; height: 18px; line-height: 16px; padding: 0 5px;
+  flex: 0 0 auto; height: 16px; line-height: 14px; padding: 0 3px;
   border: 1px solid color-mix(in srgb, #d93025 46%, transparent); border-radius: 4px;
   color: #d93025; background: color-mix(in srgb, #d93025 7%, Canvas);
-  font-size: 10px; font-weight: 700; white-space: nowrap;
+  font-size: var(--font-meta); font-weight: 500; white-space: nowrap;
 }
 .empty { padding: 24px 16px; opacity: .6; text-align: center; font-size: 12px; }
 
@@ -177,30 +171,30 @@ button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
 .request-params-splitter:hover,
 .request-params-splitter.dragging { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .request-params-header {
-  min-height: 31px; padding: 4px 8px;
+  min-height: 28px; padding: 2px 6px;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   border-bottom: 1px solid var(--border-soft); background: var(--surface-subtle);
 }
-.request-params-header strong { font-size: 12px; font-weight: 650; }
+.request-params-header strong { font-size: 13px; font-weight: 650; }
 .request-params-meta {
-  min-width: 0; overflow: hidden; color: var(--muted); font-size: 10px;
+  min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px;
   text-overflow: ellipsis; white-space: nowrap;
 }
 .request-params-content {
-  min-height: 0; flex: 1; overflow: auto; padding: 6px 10px;
+  min-height: 0; flex: 1; overflow: auto; padding: 4px 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px; line-height: 1.45;
+  font-size: var(--font-content); line-height: var(--json-line-height);
 }
 .request-param-section { margin-bottom: 5px; }
 .request-param-title {
-  display: flex; align-items: center; gap: 6px; min-height: 25px; margin: 0; padding: 0;
+  display: flex; align-items: center; gap: 5px; min-height: 22px; margin: 0; padding: 0;
   color: var(--muted); background: Canvas; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 11px; font-weight: 650;
 }
 .request-param-count {
   height: 17px; padding: 0 5px; border-radius: 9px;
   color: var(--muted); background: color-mix(in srgb, CanvasText 7%, transparent);
-  font-size: 9px; font-weight: 600; line-height: 17px;
+  font-size: 10px; font-weight: 600; line-height: 17px;
 }
 .request-param-empty { color: var(--muted); font-size: 11px; }
 .request-param-raw { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
@@ -212,9 +206,13 @@ button.compact { height: 27px; padding: 0 8px; font-size: 11px; }
   border-bottom: 1px solid var(--border-soft);
 }
 .request-query-row:last-child { border-bottom: 0; }
-.request-query-key, .request-query-value { min-width: 0; padding: 4px 6px; overflow-wrap: anywhere; }
-.request-query-key { color: #7b61a8; background: var(--surface-subtle); border-right: 1px solid var(--border-soft); }
-.request-query-value { color: #188038; }
+.request-query-key, .request-query-value { min-width: 0; padding: 2px 5px; overflow-wrap: anywhere; }
+.request-query-key { color: #7b61a8; background: var(--surface-subtle); border-right: 1px solid var(--border-soft); white-space: pre-wrap; }
+.request-query-value { display: flex; align-items: flex-start; color: #188038; }
+.request-param-value-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.request-query-row:hover .json-field-actions { opacity: 1; pointer-events: auto; }
+.request-params-content:focus, .preview-content:focus { outline: none; }
+.request-params-content:focus-visible, .preview-content:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
 
 .splitter {
   position: relative; flex: 0 0 7px; width: 7px; cursor: col-resize; background: transparent;
@@ -232,7 +230,7 @@ body.resizing-request-horizontal { cursor: col-resize; user-select: none; }
 body.resizing-request-vertical { cursor: row-resize; user-select: none; }
 
 .detail-pane { min-width: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; background: Canvas; container-type: inline-size; }
-.detail-header { gap: 4px; min-height: 32px; background: var(--surface-subtle); }
+.detail-header { gap: 4px; min-height: 28px; background: var(--surface-subtle); }
 .detail-heading { min-width: 80px; flex: 1; display: flex; align-items: center; gap: 8px; overflow: hidden; }
 .detail-heading strong { font-size: 13px; font-weight: 650; }
 .detail-tools { min-width: 240px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex: 0 1 320px; }
@@ -241,34 +239,34 @@ body.resizing-request-vertical { cursor: row-resize; user-select: none; }
   border: 1px solid var(--border); border-radius: 6px; background: color-mix(in srgb, CanvasText 3%, Canvas);
 }
 button.layout-mode-btn {
-  width: 25px; height: 23px; padding: 0 !important;
+  width: 25px; height: 21px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: 0; border-radius: 4px; background: transparent; color: var(--muted);
 }
-.layout-mode-btn .icon-svg { width: 15px; height: 15px; }
+.layout-mode-btn .icon-svg { width: 14px; height: 14px; }
 button.layout-mode-btn:hover:not(:disabled) { color: CanvasText; background: var(--hover); }
 button.layout-mode-btn[aria-pressed="true"] { color: var(--accent); background: var(--selected); }
 button.layout-mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .preview-sort {
   display: inline-flex; align-items: center; justify-content: center;
-  flex-shrink: 0; width: auto; height: 28px; padding: 0 7px; gap: 4px;
+  flex-shrink: 0; width: auto; height: var(--control-height); padding: 0 5px; gap: 4px;
   border: 1px solid var(--border); border-radius: 5px;
   background: transparent; color: var(--muted);
 }
-.preview-sort .icon-svg { width: 15px; height: 15px; }
-.sort-label { min-width: 22px; font-size: 11px; font-weight: 650; line-height: 1; }
+.preview-sort .icon-svg { width: 14px; height: 14px; }
+.sort-label { min-width: 22px; font-size: 11px; font-weight: 500; line-height: 1; }
 .preview-sort:hover { background: var(--hover); color: CanvasText; }
 .preview-sort[aria-pressed="true"] { color: var(--accent); background: var(--selected); }
 .preview-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .preview-search {
-  min-width: 120px; max-width: 100%; width: auto; height: 28px; padding: 0 8px; flex: 1;
+  min-width: 120px; max-width: 100%; width: auto; height: var(--control-height); padding: 0 6px; flex: 1;
   border: 1px solid var(--border); border-radius: 5px;
-  background: Field; color: FieldText; font-size: 11px; outline: none;
+  background: Field; color: FieldText; font-size: 12px; outline: none;
 }
 .preview-search-matches { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 0; margin-left: -3px; }
-.preview-match-count { min-width: 27px; margin-right: 1px; color: var(--muted); font-size: 10px; text-align: center; white-space: nowrap; }
+.preview-match-count { min-width: 27px; margin-right: 1px; color: var(--muted); font-size: 11px; text-align: center; white-space: nowrap; }
 button.preview-match-btn {
-  width: 22px; height: 24px; padding: 0 !important;
+  width: 22px; height: 22px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--muted);
 }
@@ -277,22 +275,19 @@ button.preview-match-btn:hover:not(:disabled) { color: CanvasText; background: v
 button.preview-match-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .meta { min-width: 0; margin-top: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .meta.business-failed-meta { color: #d93025; font-weight: 600; }
-.copy-status { color: #188038; min-width: 46px; text-align: right; font-size: 11px; }
-.copy-status:empty { display: none; }
-
 .preview-content {
   flex: 1; min-height: 0; overflow: auto;
-  padding: 6px 8px 8px 20px;
+  padding: 4px 6px 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px; line-height: 1.5; white-space: normal;
+  font-size: var(--font-content); line-height: var(--json-line-height); white-space: normal;
 }
 .preview-placeholder { opacity: .62; padding: 4px 2px; }
 .preview-raw { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; }
-.json-node { margin: 0 0 0 14px; }
+.json-node { margin: 0 0 0 var(--json-indent); }
 .json-root { margin-left: 0; }
 .json-details { margin: 0; padding: 0; }
 /* summary 与普通字段统一为固定行高，避免对象节点前后出现额外留白。 */
-.json-summary { position: relative; min-height: 20px; margin: 0; padding: 0 0 0 12px; cursor: default; line-height: 20px; list-style: none; white-space: nowrap; }
+.json-summary { position: relative; min-height: var(--json-line-height); margin: 0; padding: 0 0 0 12px; cursor: default; line-height: var(--json-line-height); list-style: none; white-space: nowrap; }
 .json-summary::-webkit-details-marker { display: none; }
 .json-summary::marker { content: ''; }
 /* 箭头固定在独立方框内，正文始终从同一位置开始，展开不会改变字段位置。 */
@@ -303,7 +298,7 @@ button.preview-match-btn:focus-visible { outline: 2px solid var(--accent); outli
 }
 .json-details[open] > .json-summary::before { transform: translateY(-50%) rotate(90deg); }
 .json-summary-content { display: inline-flex; align-items: center; width: 100%; min-width: 0; }
-.json-line { display: flex; align-items: center; width: 100%; min-width: 0; min-height: 20px; margin: 0; padding: 0; line-height: 20px; }
+.json-line { position: relative; display: flex; align-items: center; width: 100%; min-width: 0; min-height: var(--json-line-height); margin: 0; padding: 0; line-height: var(--json-line-height); }
 
 .json-value {
   display: inline-block;
@@ -324,42 +319,35 @@ button.preview-match-btn:focus-visible { outline: 2px solid var(--accent); outli
   cursor: zoom-out;
 }
 .json-long-line.long-value-expanded {
-  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start;
+  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); align-items: start;
 }
 .json-long-line.long-value-expanded .json-key { grid-column: 1; grid-row: 1; }
-.json-long-line.long-value-expanded .json-field-actions {
-  grid-column: 2; grid-row: 1; justify-self: start;
-}
+.json-long-line.long-value-expanded .json-field-actions { grid-column: 2; grid-row: 1; justify-self: start; }
 .json-long-line.long-value-expanded .json-long-value {
   grid-column: 1 / -1; grid-row: 2; margin-top: 4px;
 }
 
+/* 操作区跟随字段值，并始终保留自身宽度；Hover 仅改变透明度，文字不会跳动。 */
 .json-field-actions {
-  display: inline-flex; align-items: center; flex: 0 0 auto; gap: 2px;
-  max-width: 0; margin-left: 0; overflow: hidden;
-  opacity: 0; pointer-events: none; transition: opacity .08s ease, max-width .08s ease, margin-left .08s ease;
+  height: var(--json-line-height); margin-left: 4px;
+  display: inline-flex; flex: 0 0 auto; align-items: center; gap: 2px;
+  opacity: 0; pointer-events: none;
 }
-.json-line:hover .json-field-actions,
+.json-line:hover > .json-field-actions,
 .json-summary:hover .json-field-actions,
-.json-field-actions:focus-within {
-  max-width: 120px; margin-left: 7px; overflow: visible;
-  opacity: 1; pointer-events: auto;
-}
+.json-field-actions:focus-within { opacity: 1; pointer-events: auto; }
 button.json-copy-btn {
-  width: auto; min-width: 42px; height: 20px; padding: 0 5px;
-  display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; white-space: nowrap;
-  border-radius: 4px; font-size: 10px; line-height: 18px;
-  color: var(--muted); background: color-mix(in srgb, Canvas 94%, CanvasText 6%);
-  border-color: color-mix(in srgb, CanvasText 13%, transparent);
-  vertical-align: middle;
+  width: 20px; height: var(--json-line-height); padding: 0; border: 0; border-radius: 3px;
+  display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center;
+  color: var(--muted); background: Canvas; vertical-align: middle;
 }
-button.json-copy-btn:hover:not(:disabled) {
-  color: CanvasText;
-  background: color-mix(in srgb, var(--accent) 10%, Canvas);
-  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
-}
-.json-expand-btn .icon-svg { width: 12px; height: 12px; margin-right: 3px; }
+button.json-copy-btn:hover { color: var(--accent); background: var(--hover); }
+.json-copy-btn .icon-svg { width: 12px; height: 12px; stroke-width: 1.8; }
+button.json-expand-btn { width: auto; padding: 0 3px; gap: 2px; font-size: 10px; line-height: 16px; }
 .json-key { color: #7b61a8; }
+.json-line > .json-key,
+.json-summary-content > .json-key { flex: 0 0 auto; min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.json-summary-count { flex: 0 0 auto; }
 .json-string { color: #188038; }
 .json-number { color: #1a73e8; }
 .json-boolean { color: #b06000; }
@@ -369,6 +357,7 @@ button.json-copy-btn:hover:not(:disabled) {
   /* 摘要占满当前行的剩余空间，在右侧操作按钮前自动截断。 */
   display: inline-block; flex: 1 1 auto; width: auto; min-width: 0; max-width: none;
   margin-left: 3px; padding: 0 2px; overflow: hidden;
+  height: calc(var(--json-line-height) - 2px); line-height: calc(var(--json-line-height) - 4px);
   color: var(--muted); border: 1px solid color-mix(in srgb, var(--accent) 4%, transparent);
   border-radius: 3px; background: color-mix(in srgb, var(--accent) 2%, Canvas); font-size: 10px;
   text-overflow: ellipsis; vertical-align: middle; white-space: nowrap;
@@ -382,29 +371,12 @@ button.json-copy-btn:hover:not(:disabled) {
   /* Hover 底色向上下延展，形成比字段摘要更大的可点击反馈区域。 */
   box-shadow: 0 0 0 2px color-mix(in srgb, CanvasText 5%, transparent);
 }
-/* 对象复制操作固定在当前行右侧，允许覆盖摘要末尾以最大化内容展示宽度。 */
-.json-summary .json-field-actions {
-  position: absolute; top: 0; right: 3px; height: 100%; max-width: none; margin: 0;
-  padding-left: 4px; overflow: visible; visibility: hidden;
-  background: Canvas;
-}
-.json-summary:hover .json-field-actions,
-.json-summary .json-field-actions:focus-within {
-  max-width: none; margin: 0; opacity: 1; pointer-events: auto; visibility: visible;
-}
 .json-empty { opacity: .68; }
 .json-match { background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: 3px; }
 /* 整行命中项使用固定行高并垂直居中，避免高亮底色与文字基线错位。 */
-.json-line.json-match { min-height: 24px; box-sizing: border-box; align-items: center; padding: 1px 3px; }
+.json-line.json-match { min-height: var(--json-line-height); box-sizing: border-box; align-items: center; padding: 0 2px; }
 .json-match-active { outline: 1px solid color-mix(in srgb, var(--accent) 58%, transparent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .text-match { background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 3px; }
-
-/* Preview 采用接近 DevTools 的紧凑树形密度；请求 Body 复用相同的节点信息结构。 */
-.preview-content { padding: 6px; line-height: 1.35; }
-/* 箭头占用 12px 固定宽度，子节点使用相同缩进以保持父子正文对齐。 */
-.preview-content .json-node { margin-left: 12px; }
-.preview-content .json-root { margin-left: 0; }
-.preview-content .json-line, .preview-content .json-summary { min-height: 17px; line-height: 17px; }
 
 /* 自动或手动模式最终都映射为布局方向，保证分隔条和尺寸逻辑保持一致。 */
 .content[data-layout="vertical"] { flex-direction: column; }
@@ -434,18 +406,19 @@ button.json-copy-btn:hover:not(:disabled) {
   .preview-search { width: min(360px, 48vw); }
 }
 
-@media (max-width: 560px) {
-  .param-filter-panel { flex-direction: column; }
-  .filter-setting-row { width: 100%; grid-template-columns: 1fr; gap: 4px; }
-  .param-filter-panel > button { align-self: flex-end; }
-  .toolbar-main { align-items: stretch; flex-direction: column; gap: 7px; }
-  .toolbar-left, .toolbar-utility { width: 100%; }
-  .toolbar-utility { justify-content: flex-end; }
-  .filter-wrap { max-width: none; }
+/* 先收起低频按钮的文字，让搜索和工具保持同一行。 */
+@media (max-width: 640px) {
+  .toolbar-utility .utility-action { width: var(--control-height); padding: 0; justify-content: center; }
+  .toolbar-utility .utility-action > span { display: none; }
+}
+
+/* 极窄时搜索独占第二行，设置和帮助始终与品牌同行，避免出现空白工具行。 */
+@media (max-width: 360px) {
+  .toolbar-main { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title utility" "filter filter"; }
+  .toolbar-main > .filter-wrap { max-width: none; }
 }
 
 @media (max-width: 620px) {
-  .toolbar-left { flex-wrap: wrap; }
   .toolbar-actions { align-items: flex-start; }
   .action-group-label { display: none; }
   .button-group { flex-wrap: wrap; }
@@ -458,14 +431,18 @@ button.json-copy-btn:hover:not(:disabled) {
 @container (max-width: 680px) {
   .detail-header { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 4px; min-height: 0; padding-top: 4px; padding-bottom: 4px; }
   .detail-heading { width: auto; min-width: 0; }
-  .detail-tools { width: auto; min-width: 0; max-width: none; flex: none; justify-content: flex-start; }
+  .detail-tools { width: auto; min-width: 0; max-width: none; flex: none; justify-content: flex-start; flex-wrap: wrap; }
+}
+@container (max-width: 360px) {
+  .preview-search { flex-basis: 100%; width: 100%; min-width: 0; order: 1; }
 }
 
 /* v2.3 — 高频复制、文本框选、键盘控制 */
-.copy-actions { gap: 5px; }
+.copy-actions { gap: 4px; }
 .copy-action {
   --action-color: #52606d;
-  display: inline-flex; align-items: center; gap: 5px; padding: 3px 4px; font-size: 11px;
+  display: inline-flex; align-items: center; gap: 5px;
+  height: var(--control-height); padding: 0 6px; font-size: 12px;
   border-color: color-mix(in srgb, var(--action-color) 18%, var(--border));
   background: color-mix(in srgb, var(--action-color) 4%, Canvas);
 }
@@ -474,9 +451,10 @@ button.json-copy-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--action-color) 9%, Canvas);
 }
 .action-icon {
-  width: 18px; height: 18px; border-radius: 4px;
+  /* 底色只由按钮绘制，避免图标底色与外边框形成两层错位的色块。 */
+  width: 16px; height: 16px;
   display: inline-flex; align-items: center; justify-content: center;
-  color: var(--action-color); background: color-mix(in srgb, var(--action-color) 12%, Canvas); flex: 0 0 auto;
+  color: var(--action-color); flex: 0 0 auto;
 }
 .action-icon .icon-svg { width: 14px; height: 14px; }
 /* 各复制动作只使用低饱和功能色，主要通过图标区分，避免按钮栏显得杂乱。 */
@@ -493,34 +471,27 @@ button.json-copy-btn:hover:not(:disabled) {
 .url { cursor: text; }
 
 .row-copy-actions {
-  position: absolute; right: 1px; top: 50%; transform: translateY(-50%);
-  display: inline-flex; align-items: center; gap: 3px;
-  padding: 2px; border: 1px solid var(--border-soft); border-radius: 6px;
-  background: color-mix(in srgb, Canvas 94%, transparent);
-  box-shadow: 0 1px 4px color-mix(in srgb, CanvasText 10%, transparent);
-  opacity: 0; pointer-events: none; transition: opacity 90ms ease;
+  position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 0; border: 0;
+  background: var(--request-row-bg); opacity: 0; pointer-events: none;
   user-select: none; -webkit-user-select: none;
+}
+/* 工具组与行背景一致，左侧淡出只遮住长路径末尾，Hover 不改变正文宽度。 */
+.row-copy-actions::before {
+  content: ''; position: absolute; top: 0; bottom: 0; left: -10px; width: 10px;
+  background: linear-gradient(to right, transparent, var(--request-row-bg)); pointer-events: none;
 }
 .request-row:hover .row-copy-actions,
 .request-row:focus-within .row-copy-actions { opacity: 1; pointer-events: auto; }
 .row-copy-btn {
-  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px;
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 3px;
   display: inline-flex; align-items: center; justify-content: center;
-  color: white;
-  user-select: none; -webkit-user-select: none;
+  color: var(--muted); background: transparent;
 }
-.row-copy-btn:hover:not(:disabled) { filter: none; transform: none; }
-.row-copy-btn:active:not(:disabled) { transform: scale(.96); }
-.row-copy-path { background: #188038; }
-.row-copy-query { background: #1a73e8; }
-.row-copy-simple { background: #7b1fa2; }
-.row-copy-btn.row-copy-path:hover:not(:disabled) { background: #137333; }
-.row-copy-btn.row-copy-query:hover:not(:disabled) { background: #1558c0; }
-.row-copy-btn.row-copy-simple:hover:not(:disabled) { background: #681583; }
-.request-row:hover .url-cell { padding-right: 84px; }
-.request-row:hover .business-fail-badge { margin-right: 2px; }
+.row-copy-btn .icon-svg { width: 12px; height: 12px; }
+.row-copy-btn:hover:not(:disabled) { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--request-row-bg)); }
 
-.help-btn { min-width: 48px; }
 .help-overlay[hidden] { display: none !important; }
 .help-overlay {
   position: fixed; inset: 0; z-index: 1000;
@@ -538,7 +509,7 @@ button.json-copy-btn:hover:not(:disabled) {
   padding: 12px 14px; border-bottom: 1px solid var(--border-soft);
 }
 .help-header strong { font-size: 15px; }
-.help-subtitle { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.help-subtitle { margin-top: 3px; color: var(--muted); font-size: 12px; }
 .icon-close { width: 30px; height: 30px; padding: 0; border: 0; display: inline-flex; align-items: center; justify-content: center; }
 .shortcut-list { padding: 8px 14px 4px; }
 .shortcut-row {
@@ -555,24 +526,25 @@ kbd, .mouse-hint {
 }
 .mouse-hint { min-width: 70px; font-family: inherit; }
 .shortcut-or { color: var(--muted); font-size: 11px; }
-.help-note { padding: 10px 14px 13px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--border-soft); }
+.help-note { padding: 10px 14px 13px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border-soft); }
 
-@media (max-width: 980px) {
-  .copy-action { padding: 0 7px; }
-  .copy-action .action-icon { width: 17px; height: 17px; }
+/* 六个复制操作统一切换图标，避免中等宽度时末尾按钮单独换行。 */
+@media (max-width: 800px) {
+  .copy-action { width: var(--control-height); padding: 0; justify-content: center; }
+  .copy-action > span:last-child { display: none; }
 }
 
 @media (max-width: 480px) {
-  .panel-title { width: 100%; }
   .toolbar-actions { padding-right: 6px; padding-left: 6px; }
-  .copy-actions { width: 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .copy-actions { width: 100%; display: flex; flex-wrap: nowrap; }
+  .copy-actions > .copy-action { flex: 1; }
   .copy-action { min-width: 0; padding: 0; justify-content: center; }
-  .copy-action > span:last-child { display: none; }
 }
 
 /* 工具按钮统一使用 SVG 图标，保证不同平台下的笔画和基线一致。 */
 .utility-action { display: inline-flex; align-items: center; gap: 5px; border-color: transparent; background: transparent; }
 .toolbar-utility .utility-action {
+  height: var(--control-height);
   border-color: color-mix(in srgb, currentColor 14%, transparent);
   background: color-mix(in srgb, currentColor 4%, Canvas);
 }
@@ -584,6 +556,3 @@ kbd, .mouse-hint {
   background: color-mix(in srgb, currentColor 9%, Canvas);
 }
 .danger-action:hover:not(:disabled) { color: #d93025; background: color-mix(in srgb, #d93025 8%, Canvas); }
-.json-copy-icon {
-  display: inline-block; width: 12px; height: 12px; margin-right: 3px; vertical-align: -2px; opacity: .9;
-}

@@ -1,6 +1,15 @@
+// 入口只负责请求采集、选中状态与面板协调；具体解析和树渲染交给功能模块。
+const { t, localizeDocument } = ApiCopyI18n;
+const { parseJsonText } = ApiCopyJson;
+const {
+  normalizeResourceType, isApiRequest, isFileDownload, headersToObject,
+  tryPretty, getResponseJson, getRequestBody, formatFileSize,
+  getFormDataItems, getRequestBodyValue, decodeUrlComponent, decodeUrlPath,
+  formatReadableSearch, getTokenFromRecord, formatCurl,
+} = ApiCopyRequestData;
+localizeDocument();
+
 const MAX_RECORDS = 500;
-const MAX_VISIBLE_ARRAY_ITEMS = 100;
-const ARRAY_GROUP_SIZE = 100;
 const PREVIEW_SEARCH_DELAY = 180;
 const STACK_BREAKPOINT = 1100;
 const DEFAULT_IGNORED_QUERY_PARAMS = ['_t'];
@@ -12,101 +21,7 @@ const PATH_PREFIX_SEGMENTS_STORAGE_KEY = 'apiCopyPathPrefixSegments';
 const SHOW_URL_QUERY_STORAGE_KEY = 'apiCopyShowUrlQuery';
 const LAYOUT_MODE_STORAGE_KEY = 'apiCopyLayoutMode';
 const REQUEST_LIST_SIZE_STORAGE_KEY = 'apiCopyRequestListSize';
-
-// WebStorm 普通网页预览无法调用 chrome.i18n，动态文案使用中文作为本地回退。
-const I18N_FALLBACKS = {
-  businessResponseFailed: '业务返回失败',
-  base64DecodeFailed: '[响应内容为 Base64，解码失败]',
-  loadingResponse: '[正在读取响应内容…]',
-  noReadableResponse: '[无可读取的响应正文]',
-  unsupportedResponse: '[当前请求不支持读取响应正文]',
-  noApiRecords: '暂无接口记录',
-  none: '(无)',
-  currentRequestExcluded: '当前请求已被排除。',
-  selectRequest: '请选择一个请求',
-  requestCount: '$1 条',
-  requestCountWithFailures: '$1 条 · $2 业务失败',
-  noMatchingRequests: '暂无匹配请求',
-  businessFailure: '业务失败',
-  businessFailureWithReason: '业务失败：$1',
-  copyPath: '复制路径',
-  copyPathWithParams: '复制路径+参数',
-  copySimpleRequest: '复制精简请求',
-  expand: '展开',
-  collapse: '收起',
-  expandFullValue: '展开完整字段值',
-  collapseFullValue: '收起完整字段值',
-  toggleFieldValue: '$1字段 $2 的完整值',
-  copy: '复制',
-  copyFullFieldValue: '复制完整字段值',
-  copyFieldValue: '复制字段 $1 的值',
-  doubleClickToggle: '双击展开 / 收起',
-  longTextAria: '长文本，双击展开或收起',
-  emptyResponse: '(无返回内容)',
-  noMatchingJson: '没有匹配的响应字段或值',
-  noMatchingResponse: '没有匹配的响应内容',
-  businessFailureMeta: '业务失败',
-  businessFailureMetaWithReason: '业务失败 ($1)',
-  copied: '已复制',
-  sortAlphabetically: '按字母排序',
-  sortOriginal: '按原始 JSON 排序',
-  sortAlphabeticallyTitle: '当前：按字母排序；点击切换为原始 JSON 顺序',
-  sortOriginalTitle: '当前：原始 JSON 顺序；点击切换为按字母排序',
-  originalOrderShort: '原序',
-  previousMatch: '上一个匹配项',
-  nextMatch: '下一个匹配项',
-  searchMatchCount: '$1 / $2',
-  requestParameters: '请求参数',
-  selectRequestForParams: '选择一条请求后查看 Query 和 Body 参数。',
-  queryParameters: 'Query 参数',
-  requestBody: '请求 Body',
-  formData: 'FormData',
-  noFormData: '无 FormData 字段',
-  formDataFile: '文件：$1',
-  formDataFileMeta: '$1 · $2',
-  noQueryParameters: '无 Query 参数',
-  noRequestBody: '无请求 Body',
-  parameterSummary: 'Query $1 项 · Body $2',
-  bodyPresent: '有',
-  bodyAbsent: '无',
-  pageReloadedPlaceholder: '页面已刷新，正在记录新请求。',
-  clearedPlaceholder: '已清空。重新触发接口后会继续记录。',
-  previewData: '模拟数据',
-};
-
-function t(key, substitutions = []) {
-  const values = Array.isArray(substitutions) ? substitutions.map(String) : [String(substitutions)];
-  const i18n = globalThis.chrome?.i18n;
-  const message = values.length ? i18n?.getMessage?.(key, values) : i18n?.getMessage?.(key);
-  if (message) return message;
-
-  return (I18N_FALLBACKS[key] || key).replace(/\$(\d+)/g, (_, index) => values[Number(index) - 1] ?? '');
-}
-
-// 静态 HTML 通过 data-i18n 属性映射消息，避免在脚本中维护重复的节点清单。
-function localizeDocument() {
-  const getMessage = globalThis.chrome?.i18n?.getMessage;
-  if (!getMessage) return;
-
-  const language = globalThis.chrome.i18n.getUILanguage?.();
-  if (language) document.documentElement.lang = language;
-
-  const mappings = [
-    ['data-i18n', 'textContent'],
-    ['data-i18n-title', 'title'],
-    ['data-i18n-placeholder', 'placeholder'],
-    ['data-i18n-aria-label', 'aria-label'],
-  ];
-
-  for (const [attribute, property] of mappings) {
-    for (const element of document.querySelectorAll(`[${attribute}]`)) {
-      const message = getMessage.call(globalThis.chrome.i18n, element.getAttribute(attribute));
-      if (message) element[property] = message;
-    }
-  }
-}
-
-localizeDocument();
+const REQUEST_SORT_STORAGE_KEY = 'apiCopyRequestSortOrder';
 
 function loadIgnoredQueryParams() {
   try {
@@ -151,14 +66,21 @@ const state = {
   pathPrefixSegments: loadPathPrefixSegments(),
   // 请求列表默认隐藏 Query，参数区仍保留完整参数。
   showUrlQuery: loadShowUrlQuery(),
+  // 默认沿用较早请求在前，用户切换后在刷新和重新打开面板时恢复。
+  requestSortOrder: localStorage.getItem(REQUEST_SORT_STORAGE_KEY) === 'newest' ? 'newest' : 'oldest',
   // Preview 默认按字母排列字段，切换请求时保留当前排序方式。
   previewSortOrder: 'alphabetical',
   // 搜索清空时暂存当前 JSON 节点的展开状态，避免视图突然折叠。
   previewOpenStates: null,
+  // 长文本与 JSON 折叠分别记录，搜索或切换请求后继续保持阅读位置。
+  previewExpandedValues: new Set(),
   // 用于判断本次输入是否从有搜索词切换为清空状态。
   previewSearchQuery: '',
   // 当前 JSON 搜索命中项及其在列表中的位置。
   previewMatches: [],
+  // 搜索结果独立于 DOM，按当前命中位置惰性展开数组范围。
+  previewSearchIndex: null,
+  requestListFrame: null,
   previewMatchIndex: -1,
   // 当前预览对应的请求，用于区分“列表刷新”和“切换接口”。
   previewRecordId: null,
@@ -176,8 +98,7 @@ const el = {
   copyPathBtn: document.querySelector('#copyPathBtn'),
   copyPathQueryBtn: document.querySelector('#copyPathQueryBtn'),
   copyTokenBtn: document.querySelector('#copyTokenBtn'),
-  paramFilterBtn: document.querySelector('#paramFilterBtn'),
-  paramFilterPanel: document.querySelector('#paramFilterPanel'),
+  copyCurlBtn: document.querySelector('#copyCurlBtn'),
   ignoredParamsInput: document.querySelector('#ignoredParamsInput'),
   ignoredPathsInput: document.querySelector('#ignoredPathsInput'),
   pathPrefixSegmentsInput: document.querySelector('#pathPrefixSegmentsInput'),
@@ -185,6 +106,7 @@ const el = {
   resetIgnoredParamsBtn: document.querySelector('#resetIgnoredParamsBtn'),
   clearBtn: document.querySelector('#clearBtn'),
   requestList: document.querySelector('#requestList'),
+  requestSortBtn: document.querySelector('#requestSortBtn'),
   requestParamsSplitter: document.querySelector('#requestParamsSplitter'),
   requestParamsContent: document.querySelector('#requestParamsContent'),
   requestParamsMeta: document.querySelector('#requestParamsMeta'),
@@ -202,19 +124,41 @@ const el = {
   listPane: document.querySelector('#listPane'),
   splitter: document.querySelector('#splitter'),
   layoutModeButtons: [...document.querySelectorAll('[data-layout-mode]')],
-  copyStatus: document.querySelector('#copyStatus'),
   helpBtn: document.querySelector('#helpBtn'),
   helpOverlay: document.querySelector('#helpOverlay'),
   helpCloseBtn: document.querySelector('#helpCloseBtn'),
 };
 
-function normalizeResourceType(request) {
-  return String(request?._resourceType || request?.request?._resourceType || '').toLowerCase();
-}
+// 面板控件只协调弹层与反馈，配置值仍沿用原有存储和业务处理入口。
+const panelUi = ApiCopyPanelUi.create({
+  t, createSvgIcon,
+  onSettingsOpen() {
+    el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
+    el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
+    el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
+    el.showUrlQueryInput.checked = state.showUrlQuery;
+  },
+});
 
-function isApiRequest(record) {
-  return record.resourceType === 'xhr' || record.resourceType === 'fetch';
-}
+const requestFilters = ApiCopyRequestFilters.create({ onChange: renderRequestList });
+const businessRules = ApiCopyBusinessRules.createSettings({
+  t,
+  onSave(rules) {
+    // 复用已解析 JSON，修改规则不会重新读取响应或重建当前预览。
+    for (const record of state.records) {
+      if (record.businessState === 'pending') continue;
+      const result = ApiCopyBusinessRules.evaluate(getResponseJson(record, record.responseBody), rules);
+      record.businessState = result.state;
+      record.businessReason = result.reason;
+    }
+    renderRequestList();
+    renderDetailMeta(getSelectedRecord());
+  },
+});
+
+const { buildJsonNode, appendHighlightedRaw, collectJsonSearchMatches } = ApiCopyJsonTree.create({
+  t, copyText, createSvgIcon, getSortOrder: () => state.previewSortOrder,
+});
 
 function normalizeIgnoredUrlPath(value) {
   const text = String(value || '').trim();
@@ -242,56 +186,9 @@ function isIgnoredRequestUrl(rawUrl) {
   return state.ignoredUrlPaths.includes(pathname);
 }
 
-function isJsonText(text) {
-  const trimmed = String(text || '').trim();
-  return trimmed.startsWith('{') || trimmed.startsWith('[');
-}
-
-function parseJsonText(text) {
-  if (!isJsonText(text)) return undefined;
-  try { return JSON.parse(text); } catch { return undefined; }
-}
-
 function evaluateBusinessResult(body, parsedBody = undefined) {
-  if (typeof body !== 'string' || !isJsonText(body)) {
-    return { state: 'unknown', reason: '' };
-  }
-
   const data = parsedBody === undefined ? parseJsonText(body) : parsedBody;
-  if (data === undefined) return { state: 'unknown', reason: '' };
-  if (!data || Array.isArray(data) || typeof data !== 'object') {
-    return { state: 'unknown', reason: '' };
-  }
-
-  const checks = [];
-  const reasons = [];
-
-  if (Object.hasOwn(data, 'isSuccess')) {
-    const raw = data.isSuccess;
-    const normalized = typeof raw === 'string' ? raw.trim().toLowerCase() : raw;
-    if (normalized === true || normalized === 'true') {
-      checks.push(true);
-    } else if (normalized === false || normalized === 'false') {
-      checks.push(false);
-      reasons.push(`isSuccess=${String(raw)}`);
-    }
-  }
-
-  if (Object.hasOwn(data, 'code')) {
-    const raw = data.code;
-    const normalized = String(raw ?? '').trim();
-    if (normalized) {
-      const ok = normalized === '0' || normalized === '200';
-      checks.push(ok);
-      if (!ok) reasons.push(`code=${normalized}`);
-    }
-  }
-
-  if (!checks.length) return { state: 'unknown', reason: '' };
-  if (checks.some(item => item === false)) {
-    return { state: 'failure', reason: reasons.join(' · ') || t('businessResponseFailed') };
-  }
-  return { state: 'success', reason: '' };
+  return ApiCopyBusinessRules.evaluate(data, businessRules.getRules());
 }
 
 function decodeContent(content, encoding) {
@@ -309,6 +206,9 @@ function decodeContent(content, encoding) {
 
 function addRequest(request) {
   if (!request?.request?.url) return;
+  const resourceType = normalizeResourceType(request);
+  if (resourceType !== 'xhr' && resourceType !== 'fetch') return;
+  if (isFileDownload(request)) return;
   if (isIgnoredRequestUrl(request.request.url)) return;
 
   // 使用请求特征去重，避免 DevTools 重复回调导致列表重复。
@@ -327,7 +227,7 @@ function addRequest(request) {
     postData: request.request.postData || null,
     responseHeaders: request.response?.headers || [],
     mimeType: request.response?.content?.mimeType || '',
-    resourceType: normalizeResourceType(request),
+    resourceType,
     time: request.time ?? null,
     startedDateTime: request.startedDateTime || '',
     responseBody: t('loadingResponse'),
@@ -345,10 +245,13 @@ function addRequest(request) {
     if (removed?.id === state.selectedId) state.selectedId = null;
   }
 
-  renderRequestList();
+  scheduleRequestList();
+  if (!state.selectedId && state.previewRecordId !== null) renderDetail();
 
   if (typeof request.getContent === 'function') {
     request.getContent((content, encoding) => {
+      // 页面清空或记录淘汰后，旧回调不再解析大响应或触发渲染。
+      if (!state.records.includes(record)) return;
       record.responseEncoding = encoding || '';
       const decodedContent = decodeContent(content || '', encoding);
       const parsedJson = parseJsonText(decodedContent);
@@ -360,153 +263,16 @@ function addRequest(request) {
       const business = evaluateBusinessResult(record.responseBody, parsedJson);
       record.businessState = business.state;
       record.businessReason = business.reason;
-      renderRequestList();
+      scheduleRequestList();
       renderDetailIfSelected(record.id);
     });
   } else {
     record.responseBody = t('unsupportedResponse');
     record.businessState = 'unknown';
     record.businessReason = '';
-    render();
+    scheduleRequestList();
+    renderDetailIfSelected(record.id);
   }
-}
-
-function headersToObject(headers = []) {
-  const result = {};
-  for (const item of headers) {
-    const name = item.name || '';
-    const value = item.value ?? '';
-    if (Object.hasOwn(result, name)) {
-      result[name] = Array.isArray(result[name]) ? [...result[name], value] : [result[name], value];
-    } else {
-      result[name] = value;
-    }
-  }
-  return result;
-}
-
-function tryPretty(text, mimeType = '') {
-  if (text == null || text === '') return '';
-  if (typeof text !== 'string') return JSON.stringify(text, null, 2);
-
-  const trimmed = text.trim();
-  if (!trimmed) return '';
-
-  if (mimeType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    try { return JSON.stringify(JSON.parse(trimmed), null, 2); } catch {}
-  }
-  return text;
-}
-
-function getResponseJson(record, text) {
-  if (record.responseJsonParsed) return record.parsedResponseJson;
-
-  record.responseJsonParsed = true;
-  record.parsedResponseJson = parseJsonText(text);
-  return record.parsedResponseJson;
-}
-
-function getRequestBody(record) {
-  const postData = record.postData;
-  if (!postData) return '';
-
-  if (postData.text) return tryPretty(postData.text, postData.mimeType || '');
-
-  if (Array.isArray(postData.params)) {
-    const obj = {};
-    for (const p of postData.params) obj[p.name] = p.value ?? '';
-    return JSON.stringify(obj, null, 2);
-  }
-  return '';
-}
-
-function isFormDataMimeType(mimeType = '') {
-  const normalized = mimeType.toLowerCase();
-  return normalized.includes('multipart/form-data') || normalized.includes('application/x-www-form-urlencoded');
-}
-
-function createFormDataItem(param = {}) {
-  const fileName = param.fileName || param.filename || '';
-  return {
-    name: param.name || '',
-    value: param.value ?? '',
-    fileName,
-    contentType: param.contentType || '',
-    fileSize: Number.isFinite(Number(param.fileSize ?? param.size)) ? Number(param.fileSize ?? param.size) : null,
-    isFile: Boolean(fileName),
-  };
-}
-
-function formatFileSize(size) {
-  if (size === null || size === undefined) return '';
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function parseUrlEncodedFormData(text) {
-  return [...new URLSearchParams(text)].map(([name, value]) => createFormDataItem({ name, value }));
-}
-
-function parseMultipartFormData(text, mimeType) {
-  const boundaryMatch = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(mimeType);
-  const boundary = boundaryMatch?.[1] || boundaryMatch?.[2];
-  if (!boundary) return [];
-
-  const parts = text.split(`--${boundary}`);
-  const fields = [];
-  for (const part of parts) {
-    const normalized = part.replace(/^\r?\n|\r?\n--$/g, '');
-    const separatorIndex = normalized.search(/\r?\n\r?\n/);
-    if (separatorIndex < 0) continue;
-
-    const headers = normalized.slice(0, separatorIndex);
-    const content = normalized.slice(separatorIndex).replace(/^\r?\n\r?\n/, '').replace(/\r?\n$/, '');
-    const disposition = /content-disposition:\s*form-data;([^\r\n]+)/i.exec(headers)?.[1] || '';
-    const name = /name="([^"]*)"/i.exec(disposition)?.[1] || '';
-    if (!name) continue;
-    const fileName = /filename="([^"]*)"/i.exec(disposition)?.[1] || '';
-    const contentType = /content-type:\s*([^\r\n]+)/i.exec(headers)?.[1]?.trim() || '';
-    fields.push(createFormDataItem({ name, value: fileName ? '' : content, fileName, contentType }));
-  }
-  return fields;
-}
-
-// DevTools 的 postData.params 可直接提供表单字段；缺失时再解析可读取的标准表单文本。
-function getFormDataItems(record) {
-  const postData = record?.postData;
-  if (!postData || !isFormDataMimeType(postData.mimeType || '')) return null;
-
-  if (Array.isArray(postData.params)) {
-    const isUrlEncoded = postData.mimeType.toLowerCase().includes('application/x-www-form-urlencoded');
-    return postData.params.map(param => createFormDataItem(isUrlEncoded
-      ? { ...param, name: decodeUrlComponent(param.name), value: decodeUrlComponent(param.value) }
-      : param));
-  }
-
-  const text = postData.text || '';
-  if (!text) return [];
-  if (postData.mimeType.toLowerCase().includes('application/x-www-form-urlencoded')) {
-    return parseUrlEncodedFormData(text);
-  }
-  return parseMultipartFormData(text, postData.mimeType);
-}
-
-// 请求参数面板优先按 JSON 展示，表单参数转为键值对象，其他正文保留原文。
-function getRequestBodyValue(record) {
-  const postData = record?.postData;
-  if (!postData) return null;
-
-  if (postData.text) {
-    const text = postData.text.trim();
-    if (!text) return null;
-    try { return JSON.parse(text); } catch { return postData.text; }
-  }
-
-  if (Array.isArray(postData.params) && postData.params.length) {
-    return Object.fromEntries(postData.params.map(param => [param.name, param.value ?? '']));
-  }
-  return null;
 }
 
 function formatRecord(record) {
@@ -516,7 +282,9 @@ function formatRecord(record) {
   const responseHeaders = headersToObject(record.responseHeaders);
   const requestBody = getRequestBody(record);
   const responseBody = tryPretty(record.responseBody, record.mimeType);
-  const query = Object.fromEntries(filteredQueryItems(record).map(i => [i.name, i.value ?? '']));
+  const queryItems = filteredQueryItems(record);
+  const hasRepeatedNames = new Set(queryItems.map(item => item.name)).size !== queryItems.length;
+  const query = hasRepeatedNames ? queryItems : Object.fromEntries(queryItems.map(item => [item.name, item.value ?? '']));
 
   return [
     '================ REQUEST ================',
@@ -549,30 +317,8 @@ function formatRecord(record) {
   ].join('\n');
 }
 
-
 function normalizeIgnoredParamName(name) {
   return String(name || '').trim().toLowerCase();
-}
-
-function decodeUrlComponent(value) {
-  const text = String(value ?? '');
-  try {
-    // Network 元数据中的 Query 值可能仍是百分号编码；只解码一次，坏编码则保留原文。
-    return decodeURIComponent(text.replace(/\+/g, ' '));
-  } catch {
-    return text;
-  }
-}
-
-function decodeUrlPath(pathname) {
-  try { return decodeURI(pathname); } catch { return pathname; }
-}
-
-function formatReadableSearch(search) {
-  if (!search) return '';
-  const params = new URLSearchParams(search);
-  const readable = [...params].map(([name, value]) => `${name}=${value}`).join('&');
-  return readable ? `?${readable}` : '';
 }
 
 function getIgnoredParamSet() {
@@ -664,13 +410,19 @@ function filterUrlQuery(rawUrl) {
 }
 
 function filteredQueryItems(record) {
-  return (record.queryString || [])
-    .map(item => ({
+  let items = record.queryString || [];
+  try {
+    // URL 是唯一可确定编码层数的来源，URLSearchParams 负责且只负责一次表单解码。
+    const url = new URL(record.url);
+    items = [...url.searchParams].map(([name, value]) => ({ name, value }));
+  } catch {
+    items = items.map(item => ({
       ...item,
       name: decodeUrlComponent(item.name),
       value: item.value == null ? item.value : decodeUrlComponent(item.value),
-    }))
-    .filter(item => !isIgnoredQueryParam(item.name));
+    }));
+  }
+  return items.filter(item => !isIgnoredQueryParam(item.name));
 }
 
 function getSimpleUrl(rawUrl) {
@@ -715,32 +467,6 @@ function getSimplePath(rawUrl, includeQuery = false) {
     else if (path.startsWith('/api/')) path = path.slice(4);
     return includeQuery && query ? `${path}?${query}` : path;
   }
-}
-
-
-function getTokenFromRecord(record) {
-  if (!record) return '';
-  const headers = record.requestHeaders || [];
-
-  // 优先 Authorization，其次兼容常见 Token Header。
-  const preferredNames = [
-    'authorization',
-    'x-access-token',
-    'access-token',
-    'x-auth-token',
-    'token',
-  ];
-
-  for (const preferred of preferredNames) {
-    const item = headers.find(header => String(header.name || '').toLowerCase() === preferred);
-    if (!item) continue;
-    const value = String(item.value ?? '').trim();
-    if (!value) continue;
-    // Authorization 原样复制，例如：Bearer eyJ...
-    // 其他常见 Token Header 也直接复制完整值。
-    return value;
-  }
-  return '';
 }
 
 function formatPathWithParams(record) {
@@ -813,7 +539,7 @@ function trimDisplayPath(pathname) {
 function filteredRecords() {
   const keyword = el.filterInput.value.trim().toLowerCase();
   return state.records.filter(record => {
-    if (!isApiRequest(record)) return false;
+    if (!isApiRequest(record) || !requestFilters.matches(record)) return false;
     if (isIgnoredRequestUrl(record.url)) return false;
     if (!keyword) return true;
     const businessText = record.businessState === 'failure' ? `${t('businessFailure')} ${record.businessReason || ''}` : '';
@@ -822,12 +548,14 @@ function filteredRecords() {
 }
 
 function recordsInDisplayOrder(records = filteredRecords()) {
-  return [...records].sort((a, b) => {
+  const ordered = [...records].sort((a, b) => {
     const aTime = Date.parse(a.startedDateTime);
     const bTime = Date.parse(b.startedDateTime);
     if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) return aTime - bTime;
     return a.id - b.id;
   });
+  // 只改变显示顺序，采集记录仍按原顺序保存，淘汰旧记录与详情缓存不受影响。
+  return state.requestSortOrder === 'newest' ? ordered.reverse() : ordered;
 }
 
 function hasTextSelection() {
@@ -870,84 +598,126 @@ function createRowCopyButton(kind, title, onCopy) {
   button.addEventListener('click', event => {
     event.preventDefault();
     event.stopPropagation();
-    onCopy();
+    onCopy(button);
   });
   return button;
 }
 
-function renderRequestList() {
-  const records = filteredRecords();
-  // 按请求发起时间从早到晚展示；缺少时间时使用采集顺序兜底。
-  const displayRecords = recordsInDisplayOrder(records);
-  const businessFailureCount = records.filter(record => record.businessState === 'failure').length;
-  el.countText.textContent = businessFailureCount
-    ? t('requestCountWithFailures', [records.length, businessFailureCount])
-    : t('requestCount', records.length);
+// 请求进入和正文读取完成可能密集回调，同一帧只协调一次列表更新。
+function scheduleRequestList() {
+  if (state.requestListFrame !== null) return;
+  state.requestListFrame = requestAnimationFrame(() => {
+    state.requestListFrame = null;
+    renderRequestList();
+  });
+}
 
-  if (records.length === 0) {
-    el.requestList.innerHTML = '';
+function createRequestRow(record, index) {
+  const row = document.createElement('div');
+  const isBusinessFailure = record.businessState === 'failure';
+  row.className = `request-row${record.id === state.selectedId ? ' selected' : ''}${isBusinessFailure ? ' business-failed' : ''}`;
+  row.title = isBusinessFailure
+    ? `${getDisplayUrl(record.url)}\n${record.businessReason ? t('businessFailureWithReason', record.businessReason) : t('businessFailure')}`
+    : getDisplayUrl(record.url);
+
+  const requestIndex = document.createElement('span');
+  requestIndex.className = 'request-index';
+  requestIndex.textContent = String(index + 1);
+
+  const method = document.createElement('span');
+  method.className = 'method';
+  method.textContent = record.method;
+
+  const status = document.createElement('span');
+  status.className = `status ${record.status >= 200 && record.status < 400 ? 'ok' : 'bad'}`;
+  status.textContent = String(record.status || '-');
+
+  const requestMeta = document.createElement('span');
+  requestMeta.className = 'request-meta';
+  requestMeta.append(method, status);
+
+  const urlCell = document.createElement('span');
+  urlCell.className = 'url-cell';
+
+  const url = document.createElement('span');
+  url.className = 'url';
+  url.textContent = getDisplayUrl(record.url);
+  urlCell.appendChild(url);
+
+  if (isBusinessFailure) {
+    const badge = document.createElement('span');
+    badge.className = 'business-fail-badge';
+    badge.textContent = t('businessFailure');
+    badge.title = record.businessReason || t('businessResponseFailed');
+    urlCell.appendChild(badge);
+}
+
+  const rowActions = document.createElement('span');
+  rowActions.className = 'row-copy-actions';
+  rowActions.append(
+    createRowCopyButton('path', t('copyPath'), button => copyText(getSimplePath(record.url, false), button)),
+    createRowCopyButton('query', t('copyPathWithParams'), button => copyText(formatPathWithParams(record), button)),
+    createRowCopyButton('simple', t('copySimpleRequest'), button => copyText(formatRecordSimple(record), button)),
+  );
+
+  row.append(requestIndex, requestMeta, urlCell, rowActions);
+  row.addEventListener('click', () => {
+    // 鼠标拖拽框选列表文字时，不要因为 click 重新渲染而破坏选区。
+    if (hasTextSelection()) return;
+    selectRecord(record.id);
+    el.requestList.focus({ preventScroll: true });
+  });
+  return row;
+}
+
+function renderRequestList() {
+  const newestFirst = state.requestSortOrder === 'newest';
+  el.requestSortBtn.setAttribute('aria-pressed', String(newestFirst));
+  el.requestSortBtn.setAttribute('aria-label', t(newestFirst ? 'requestNewestFirst' : 'requestOldestFirst'));
+  el.requestSortBtn.title = t(newestFirst ? 'requestNewestFirstTitle' : 'requestOldestFirstTitle');
+  el.requestSortBtn.querySelector('.request-sort-arrow').setAttribute('d', newestFirst
+    ? 'M7 20V4m-3 3 3-3 3 3'
+    : 'M7 4v16m-3-3 3 3 3-3');
+  const records = filteredRecords();
+  const displayRecords = recordsInDisplayOrder(records);
+  const total = state.records.filter(record => !isIgnoredRequestUrl(record.url)).length;
+  const businessFailureCount = records.filter(record => record.businessState === 'failure').length;
+  el.countText.textContent = records.length !== total
+    ? t('filteredRequestCount', [records.length, total])
+    : businessFailureCount ? t('requestCountWithFailures', [records.length, businessFailureCount]) : t('requestCount', records.length);
+
+  const existing = new Map([...el.requestList.querySelectorAll('.request-row')].map(row => [Number(row.dataset.recordId), row]));
+  const visibleIds = new Set(displayRecords.map(record => record.id));
+  for (const [id, row] of existing) {
+    if (!visibleIds.has(id)) row.remove();
+  }
+  el.requestList.querySelector('.empty')?.remove();
+  if (!displayRecords.length) {
     const empty = document.createElement('div');
     empty.className = 'empty';
     empty.textContent = t('noMatchingRequests');
     el.requestList.appendChild(empty);
-  } else {
-    el.requestList.innerHTML = '';
-    for (const [index, record] of displayRecords.entries()) {
-      const row = document.createElement('div');
-      const isBusinessFailure = record.businessState === 'failure';
-      row.className = `request-row${record.id === state.selectedId ? ' selected' : ''}${isBusinessFailure ? ' business-failed' : ''}`;
-      row.title = isBusinessFailure
-        ? `${getDisplayUrl(record.url)}\n${record.businessReason ? t('businessFailureWithReason', record.businessReason) : t('businessFailure')}`
-        : getDisplayUrl(record.url);
+    return;
+  }
 
-      const requestIndex = document.createElement('span');
-      requestIndex.className = 'request-index';
-      requestIndex.textContent = String(index + 1);
-
-      const method = document.createElement('span');
-      method.className = 'method';
-      method.textContent = record.method;
-
-      const status = document.createElement('span');
-      status.className = `status ${record.status >= 200 && record.status < 400 ? 'ok' : 'bad'}`;
-      status.textContent = String(record.status || '-');
-
-      const requestMeta = document.createElement('span');
-      requestMeta.className = 'request-meta';
-      requestMeta.append(method, status);
-
-      const urlCell = document.createElement('span');
-      urlCell.className = 'url-cell';
-
-      const url = document.createElement('span');
-      url.className = 'url';
-      url.textContent = getDisplayUrl(record.url);
-      urlCell.appendChild(url);
-
-      if (isBusinessFailure) {
-        const badge = document.createElement('span');
-        badge.className = 'business-fail-badge';
-        badge.textContent = t('businessFailure');
-        badge.title = record.businessReason || t('businessResponseFailed');
-        urlCell.appendChild(badge);
+  let anchor = el.requestList.firstElementChild;
+  for (const [index, record] of displayRecords.entries()) {
+    const rowKey = JSON.stringify([index, getDisplayUrl(record.url), record.businessState, record.businessReason]);
+    let row = existing.get(record.id);
+    if (!row || row.dataset.rowKey !== rowKey) {
+      const replacement = createRequestRow(record, index);
+      replacement.dataset.recordId = String(record.id);
+      replacement.dataset.rowKey = rowKey;
+      if (row) {
+        if (anchor === row) anchor = replacement;
+        row.replaceWith(replacement);
       }
-
-      const rowActions = document.createElement('span');
-      rowActions.className = 'row-copy-actions';
-      rowActions.append(
-        createRowCopyButton('path', t('copyPath'), () => copyText(getSimplePath(record.url, false))),
-        createRowCopyButton('query', t('copyPathWithParams'), () => copyText(formatPathWithParams(record))),
-        createRowCopyButton('simple', t('copySimpleRequest'), () => copyText(formatRecordSimple(record))),
-      );
-
-      row.append(requestIndex, requestMeta, urlCell, rowActions);
-      row.addEventListener('click', () => {
-        // 鼠标拖拽框选列表文字时，不要因为 click 重新渲染而破坏选区。
-        if (hasTextSelection()) return;
-        selectRecord(record.id);
-      });
-      el.requestList.appendChild(row);
+      row = replacement;
     }
+    row.classList.toggle('selected', record.id === state.selectedId);
+    // 保留没有变化的 DOM 节点、滚动位置与用户文字选区。
+    if (row !== anchor) el.requestList.insertBefore(row, anchor);
+    anchor = row.nextElementSibling;
   }
 }
 
@@ -956,18 +726,42 @@ function render() {
   renderDetail();
 }
 
+// 每条请求独立保存阅读状态；记录被淘汰时随对象一起释放。
+function saveRequestView() {
+  const record = getSelectedRecord();
+  if (!record || state.previewRecordId !== record.id) return;
+  record.viewState = {
+    openStates: getPreviewOpenStates(),
+    expandedValues: new Set([...el.previewContent.querySelectorAll('.json-long-value.expanded')]
+      .map(node => node.parentElement.dataset.matchPath)),
+    searchQuery: el.previewSearchInput.value,
+    matchIndex: state.previewMatchIndex,
+    previewScroll: el.previewContent.scrollTop,
+    paramsScroll: el.requestParamsContent.scrollTop,
+    paramsOpenStates: new Map([...el.requestParamsContent.querySelectorAll('details[data-json-path]')]
+      .map(details => [details.dataset.jsonPath, details.open])),
+  };
+}
+
 function selectRecord(id) {
+  if (state.selectedId === id) return;
+  saveRequestView();
   state.selectedId = id;
-  state.previewOpenStates = null;
+  const view = getSelectedRecord()?.viewState;
+  state.previewOpenStates = view?.openStates || null;
+  state.previewExpandedValues = view?.expandedValues || new Set();
+  el.previewSearchInput.value = view?.searchQuery || '';
   state.previewSearchQuery = el.previewSearchInput.value.trim().toLowerCase();
-  state.previewMatchIndex = 0;
+  state.previewMatchIndex = view?.matchIndex ?? 0;
   state.previewRecordId = null;
-  el.copyFullBtn.disabled = false;
-  el.copySimpleBtn.disabled = false;
-  el.copyPathBtn.disabled = false;
-  el.copyPathQueryBtn.disabled = false;
-  el.copyTokenBtn.disabled = !getTokenFromRecord(getSelectedRecord());
+  state.previewSearchIndex = null;
+  clearTimeout(state.previewSearchTimer);
   render();
+  requestAnimationFrame(() => {
+    if (state.selectedId !== id) return;
+    el.previewContent.scrollTop = view?.previewScroll || 0;
+    el.requestParamsContent.scrollTop = view?.paramsScroll || 0;
+  });
 }
 
 function getSelectedRecord() {
@@ -1003,161 +797,6 @@ function renderDetailIfSelected(id) {
   if (state.selectedId === id) renderDetail();
 }
 
-const keyCollator = new Intl.Collator('en', {
-  numeric: true,
-  sensitivity: 'base',
-});
-
-function valueClass(value) {
-  if (value === null) return 'json-null';
-  if (typeof value === 'string') return 'json-string';
-  if (typeof value === 'number') return 'json-number';
-  if (typeof value === 'boolean') return 'json-boolean';
-  return '';
-}
-
-function primitiveText(value) {
-  if (value === null) return 'null';
-  if (typeof value === 'string') return value;
-  return String(value);
-}
-
-function formatJsonPrimitive(value) {
-  return typeof value === 'string' ? JSON.stringify(value) : primitiveText(value);
-}
-
-function textMatches(value, query) {
-  if (!query) return false;
-  return String(value ?? '').toLowerCase().includes(query);
-}
-
-// 仅调整 Preview 对象字段的展示顺序，数组始终保留元素顺序。
-function sortedEntries(value) {
-  const entries = Object.entries(value);
-  if (Array.isArray(value) || state.previewSortOrder === 'original') return entries;
-  return entries.sort(([a], [b]) => keyCollator.compare(a, b));
-}
-
-function nodeMatches(value, key, query) {
-  if (!query) return true;
-  if (key !== null && key !== undefined && textMatches(key, query)) return true;
-  if (value === null || typeof value !== 'object') {
-    return textMatches(primitiveText(value), query);
-  }
-  return sortedEntries(value).some(([childKey, childValue]) => nodeMatches(childValue, childKey, query));
-}
-
-function copyableJsonValue(value) {
-  if (value === null) return 'null';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'object') {
-    try { return JSON.stringify(value, null, 2); } catch { return String(value); }
-  }
-  return String(value);
-}
-
-function createFieldActions(key, value, longValueEl = null) {
-  if (key === null || key === undefined) return null;
-
-  const actions = document.createElement('span');
-  actions.className = 'json-field-actions';
-  const stopToggle = event => {
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  if (longValueEl) {
-    const expandBtn = document.createElement('button');
-    expandBtn.type = 'button';
-    expandBtn.className = 'json-copy-btn json-expand-btn';
-    const expandIcon = createSvgIcon(['M7 9l5 5 5-5']);
-    const expandLabel = document.createElement('span');
-    expandLabel.textContent = t('expand');
-    expandBtn.append(expandIcon, expandLabel);
-
-    // 按钮和双击共用状态更新，确保图标、文案与文本展示始终一致。
-    const setExpanded = expanded => {
-      longValueEl.classList.toggle('expanded', expanded);
-      longValueEl.parentElement?.classList.toggle('long-value-expanded', expanded);
-      expandIcon.querySelector('path').setAttribute('d', expanded ? 'M7 15l5-5 5 5' : 'M7 9l5 5 5-5');
-      const action = expanded ? t('collapse') : t('expand');
-      expandLabel.textContent = action;
-      expandBtn.title = expanded ? t('collapseFullValue') : t('expandFullValue');
-      expandBtn.setAttribute('aria-label', t('toggleFieldValue', [action, String(key)]));
-      expandBtn.setAttribute('aria-expanded', String(expanded));
-    };
-
-    setExpanded(false);
-    expandBtn.addEventListener('pointerdown', stopToggle);
-    expandBtn.addEventListener('click', event => {
-      stopToggle(event);
-      setExpanded(!longValueEl.classList.contains('expanded'));
-    });
-    longValueEl.addEventListener('dblclick', event => {
-      event.stopPropagation();
-      setExpanded(!longValueEl.classList.contains('expanded'));
-    });
-    actions.append(expandBtn);
-  }
-
-  const copyValueBtn = document.createElement('button');
-  copyValueBtn.type = 'button';
-  copyValueBtn.className = 'json-copy-btn';
-  const copyIcon = createSvgIcon(['M9 9h10v10H9zM5 15H4V5h10v1']);
-  copyIcon.classList.add('json-copy-icon');
-  const copyLabel = document.createElement('span');
-  copyLabel.textContent = t('copy');
-  copyValueBtn.append(copyIcon, copyLabel);
-  copyValueBtn.title = t('copyFullFieldValue');
-  copyValueBtn.setAttribute('aria-label', t('copyFieldValue', String(key)));
-
-  copyValueBtn.addEventListener('pointerdown', stopToggle);
-  copyValueBtn.addEventListener('click', event => {
-    stopToggle(event);
-    copyText(copyableJsonValue(value));
-  });
-
-  actions.append(copyValueBtn);
-  return actions;
-}
-
-function appendPrimitive(parent, value, key = null, query = '') {
-  const line = document.createElement('div');
-  line.className = 'json-line';
-  const matched = query && (
-    (key !== null && textMatches(key, query)) ||
-    textMatches(primitiveText(value), query)
-  );
-  if (matched) line.classList.add('json-match');
-
-  if (key !== null) {
-    const keyEl = document.createElement('span');
-    keyEl.className = 'json-key';
-    keyEl.textContent = `${String(key)}: `;
-    line.appendChild(keyEl);
-  }
-  const valueEl = document.createElement('span');
-  const rawValueText = primitiveText(value);
-  // 仅展示时补全字符串引号，复制和长文本判断仍使用原始值。
-  const displayValueText = formatJsonPrimitive(value);
-  valueEl.className = `json-value ${valueClass(value)}`.trim();
-  valueEl.textContent = displayValueText;
-
-  if (typeof value === 'string' && rawValueText.length > 80) {
-    line.classList.add('json-long-line');
-    valueEl.classList.add('json-long-value');
-    valueEl.title = `${rawValueText}\n\n${t('doubleClickToggle')}`;
-    valueEl.setAttribute('aria-label', t('longTextAria'));
-  }
-
-  line.appendChild(valueEl);
-
-  const actions = createFieldActions(key, value, valueEl.classList.contains('json-long-value') ? valueEl : null);
-  if (actions) line.appendChild(actions);
-
-  parent.appendChild(line);
-}
-
 function getPreviewOpenStates() {
   const openStates = new Map();
   for (const details of el.previewContent.querySelectorAll('details[data-json-path]')) {
@@ -1167,261 +806,11 @@ function getPreviewOpenStates() {
 }
 
 function preservePreviewOpenStates(record) {
-  const query = el.previewSearchInput.value.trim();
-  // 仅在同一条接口、未搜索时保存手动展开状态；搜索中的展开规则由匹配路径决定。
-  if (!record || state.previewRecordId !== record.id || query) return;
+  // 搜索展开与手动展开统一记录，清除搜索时不回退用户正在阅读的节点。
+  if (!record || state.previewRecordId !== record.id) return;
   state.previewOpenStates = getPreviewOpenStates();
-}
-
-function normalizeSummaryKey(key) {
-  return String(key).replace(/[\s_-]/g, '').toLowerCase();
-}
-
-function isTechnicalSummaryKey(key) {
-  return /^(create|created|update|updated|modify|modified|delete|deleted|audit)/.test(key)
-    || /(time|date|timestamp|version)$/.test(key);
-}
-
-function summaryEntryPriority(key) {
-  const normalized = normalizeSummaryKey(key);
-  // 创建人、更新时间等技术字段仅在没有其他可用字段时作为兜底展示。
-  if (isTechnicalSummaryKey(normalized)) return 100;
-  if (normalized === 'name' || normalized.endsWith('name') || normalized.endsWith('names')
-    || normalized === 'title' || normalized.endsWith('title') || normalized.endsWith('label')) return 0;
-  if (normalized === 'code' || normalized.endsWith('code')) return 1;
-  if (normalized === 'id' || normalized.endsWith('id')) return 2;
-  if (normalized === 'status' || normalized.endsWith('status') || normalized.endsWith('state')) return 3;
-  return 10;
-}
-
-function summaryEntrySpecificity(key) {
-  const normalized = normalizeSummaryKey(key);
-  // 同类字段中，优先精确名称和单数名称，避免 Names 等集合字段占满整段摘要。
-  if (normalized === 'name' || normalized === 'title' || normalized === 'label' || normalized === 'displayname') return 0;
-  if (normalized.endsWith('names')) return 2;
-  if (normalized.endsWith('name') || normalized.endsWith('title') || normalized.endsWith('label')) return 1;
-  if (normalized === 'code' || normalized === 'id' || normalized === 'status' || normalized === 'state') return 0;
-  return 1;
-}
-
-function canUseInJsonSummary(value) {
-  if (value === null || typeof value === 'object') return false;
-  return typeof value !== 'string' || value.trim() !== '';
-}
-
-function appendJsonSummaryPreview(parent, value) {
-  if (Array.isArray(value) || !value || typeof value !== 'object') return;
-
-  // 摘要不受字母排序影响：按名称、编码、ID、状态、原始字段的业务优先级稳定展示。
-  const primitiveEntries = Object.entries(value)
-    .map(([key, childValue], index) => ({ key, childValue, index }))
-    .filter(({ childValue }) => canUseInJsonSummary(childValue));
-  // 基础字段缺失时才回退到对象或数组，保证折叠节点仍有可识别的信息。
-  const sourceEntries = primitiveEntries.length
-    ? primitiveEntries
-    : Object.entries(value).map(([key, childValue], index) => ({ key, childValue, index }));
-  const sortedEntries = sourceEntries.sort((a, b) => {
-    const priorityDifference = summaryEntryPriority(a.key) - summaryEntryPriority(b.key);
-    if (priorityDifference) return priorityDifference;
-    return summaryEntrySpecificity(a.key) - summaryEntrySpecificity(b.key) || a.index - b.index;
-  });
-  const entries = [];
-  const usedBusinessCategories = new Set();
-  // 摘要由可用行宽自然截断，字段数量只保留性能上限，避免大数组创建过多节点。
-  const maxEntries = 12;
-
-  for (const entry of sortedEntries) {
-    const priority = summaryEntryPriority(entry.key);
-    // 名称、编码、ID、状态各保留一个，避免同类长字段遮住后续关键信息。
-    if (priority <= 3 && usedBusinessCategories.has(priority)) continue;
-    if (priority <= 3) usedBusinessCategories.add(priority);
-    entries.push([entry.key, entry.childValue]);
-    if (entries.length === maxEntries) break;
-  }
-  if (!entries.length) return;
-
-  const preview = document.createElement('span');
-  preview.className = 'json-summary-preview';
-
-  for (const [index, [childKey, childValue]] of entries.slice(0, maxEntries).entries()) {
-    if (index) preview.appendChild(document.createTextNode(', '));
-
-    const keyEl = document.createElement('span');
-    keyEl.className = 'json-key';
-    keyEl.textContent = `${childKey}: `;
-    preview.appendChild(keyEl);
-
-    const valueEl = document.createElement('span');
-    if (childValue !== null && typeof childValue === 'object') {
-      valueEl.className = 'json-type';
-      valueEl.textContent = Array.isArray(childValue) ? '[…]' : '{…}';
-    } else {
-      valueEl.className = `json-value ${valueClass(childValue)}`.trim();
-      valueEl.textContent = formatJsonPrimitive(childValue);
-    }
-    preview.appendChild(valueEl);
-  }
-
-  if (entries.length === maxEntries && sortedEntries.length > entries.length) {
-    preview.appendChild(document.createTextNode(', …'));
-  }
-  parent.appendChild(preview);
-}
-
-function escapeJsonPathSegment(key) {
-  return String(key).replaceAll('~', '~0').replaceAll('/', '~1');
-}
-
-function getDefaultNodeOpen(value, key, depth) {
-  if (depth === 0) return true;
-  // 大型 data 数组默认折叠，避免刚打开预览就创建数千个节点。
-  return depth === 1 && key === 'data' && (!Array.isArray(value) || value.length <= MAX_VISIBLE_ARRAY_ITEMS);
-}
-
-function buildArrayRangeNode(entries, start, end, depth, query, openStates, path) {
-  const wrapper = document.createElement('div');
-  wrapper.className = 'json-node json-array-range';
-
-  const details = document.createElement('details');
-  details.className = 'json-details';
-  details.dataset.jsonPath = path;
-  details.open = openStates?.get(path) ?? false;
-
-  const summary = document.createElement('summary');
-  summary.className = 'json-summary json-range-summary';
-  // 与 Chrome DevTools 一致，直接使用数组下标范围表达分组。
-  summary.textContent = `[${start} … ${end}]`;
-  details.appendChild(summary);
-
-  const populate = () => {
-    if (details.dataset.childrenRendered) return;
-    details.dataset.childrenRendered = 'true';
-    for (const [childKey, childValue] of entries.slice(start, end + 1)) {
-      const childPath = `${path}/${escapeJsonPathSegment(childKey)}`;
-      details.appendChild(buildJsonNode(childValue, childKey, depth + 1, query, openStates, childPath));
-    }
-  };
-
-  details.addEventListener('toggle', () => {
-    if (details.open) populate();
-  });
-  if (details.open) populate();
-
-  wrapper.appendChild(details);
-  return wrapper;
-}
-
-function buildJsonNode(value, key = null, depth = 0, query = '', openStates = null, path = '') {
-  const wrapper = document.createElement('div');
-  wrapper.className = depth === 0 ? 'json-node json-root' : 'json-node';
-
-  if (value === null || typeof value !== 'object') {
-    appendPrimitive(wrapper, value, key, query);
-    return wrapper;
-  }
-
-  const isArray = Array.isArray(value);
-  const allEntries = sortedEntries(value);
-  const keyMatched = key !== null && textMatches(key, query);
-
-  const details = document.createElement('details');
-  details.className = 'json-details';
-  details.dataset.jsonPath = path;
-  // 搜索仅强制展开命中节点及其父级路径，未命中节点保留搜索前的展开状态。
-  details.open = query && nodeMatches(value, key, query)
-    ? true
-    : openStates?.get(path) ?? getDefaultNodeOpen(value, key, depth);
-
-  const summary = document.createElement('summary');
-  summary.className = 'json-summary';
-  if (keyMatched) summary.classList.add('json-match');
-
-  // 让键、类型和折叠摘要共享一段可伸缩行宽，避免摘要按内容宽度提前截断。
-  const summaryContent = document.createElement('span');
-  summaryContent.className = 'json-summary-content';
-
-  if (key !== null) {
-    const keyEl = document.createElement('span');
-    keyEl.className = 'json-key';
-    keyEl.textContent = `${String(key)}: `;
-    summaryContent.appendChild(keyEl);
-  }
-
-  const type = document.createElement('span');
-  type.className = 'json-type json-summary-count';
-  // 使用 DevTools 风格的紧凑标识，保留元素或字段数量但不重复显示类型名称。
-  type.textContent = isArray ? `[${allEntries.length}]` : `{${allEntries.length}}`;
-  summaryContent.appendChild(type);
-  appendJsonSummaryPreview(summaryContent, value);
-  summary.appendChild(summaryContent);
-
-  const actions = createFieldActions(key, value);
-  if (actions) summary.appendChild(actions);
-  details.appendChild(summary);
-
-  const populate = () => {
-    if (details.dataset.childrenRendered) return;
-    details.dataset.childrenRendered = 'true';
-
-    if (allEntries.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'json-node json-empty';
-      empty.textContent = isArray ? '[]' : '{}';
-      details.appendChild(empty);
-      return;
-    }
-
-    // 大数组按范围分组，单次最多创建一个范围内的节点。
-    if (isArray && allEntries.length > MAX_VISIBLE_ARRAY_ITEMS && !query) {
-      for (let start = 0; start < allEntries.length; start += ARRAY_GROUP_SIZE) {
-        const end = Math.min(start + ARRAY_GROUP_SIZE - 1, allEntries.length - 1);
-        const rangePath = `${path}/@${start}-${end}`;
-        details.appendChild(buildArrayRangeNode(allEntries, start, end, depth, query, openStates, rangePath));
-      }
-      return;
-    }
-
-    for (const [childKey, childValue] of allEntries) {
-      const childPath = `${path}/${escapeJsonPathSegment(childKey)}`;
-      details.appendChild(buildJsonNode(childValue, childKey, depth + 1, query, openStates, childPath));
-    }
-  };
-
-  details.addEventListener('toggle', () => {
-    if (details.open) populate();
-  });
-  if (details.open) populate();
-
-  wrapper.appendChild(details);
-  return wrapper;
-}
-
-function appendHighlightedRaw(parent, text, query) {
-  if (!query) {
-    parent.textContent = text;
-    return;
-  }
-
-  const lower = text.toLowerCase();
-  let cursor = 0;
-  let matches = 0;
-  const maxHighlights = 300;
-
-  while (cursor < text.length && matches < maxHighlights) {
-    const index = lower.indexOf(query, cursor);
-    if (index < 0) break;
-    if (index > cursor) parent.appendChild(document.createTextNode(text.slice(cursor, index)));
-
-    const mark = document.createElement('span');
-    mark.className = 'text-match';
-    mark.textContent = text.slice(index, index + query.length);
-    parent.appendChild(mark);
-
-    cursor = index + query.length;
-    matches += 1;
-  }
-
-  if (cursor < text.length) parent.appendChild(document.createTextNode(text.slice(cursor)));
+  state.previewExpandedValues = new Set([...el.previewContent.querySelectorAll('.json-long-value.expanded')]
+    .map(node => node.parentElement.dataset.matchPath));
 }
 
 function appendRequestParamSection(title, value, count = null) {
@@ -1439,14 +828,15 @@ function appendRequestParamSection(title, value, count = null) {
   }
   section.appendChild(heading);
 
-  // 空参数仅保留标题和计数，避免重复的空状态文案占用面板高度。
+  // 调用方已排除缺失 Body；显式提交的 null 等 JSON 标量仍需正常展示。
   if (typeof value === 'string') {
     const raw = document.createElement('pre');
     raw.className = 'request-param-raw';
-    raw.textContent = value;
+    // 显式 JSON 空字符串保留引号，避免看起来像缺失 Body。
+    raw.textContent = value === '' ? '""' : value;
     section.appendChild(raw);
-  } else if (value !== null) {
-    const jsonNode = buildJsonNode(value);
+  } else {
+    const jsonNode = buildJsonNode(value, null, 0, '', getSelectedRecord()?.viewState?.paramsOpenStates);
     jsonNode.classList.add('request-param-json');
     section.appendChild(jsonNode);
   }
@@ -1454,82 +844,60 @@ function appendRequestParamSection(title, value, count = null) {
   el.requestParamsContent.appendChild(section);
 }
 
-function appendQueryParameters(queryItems) {
+// Query 和表单共用列表，保留同名参数的每一行；文件字段只复制文件名。
+function appendParameterList(title, items, isFormData = false) {
   const section = document.createElement('section');
   section.className = 'request-param-section';
-
   const heading = document.createElement('div');
   heading.className = 'request-param-title';
-  heading.textContent = t('queryParameters');
-  const badge = document.createElement('span');
-  badge.className = 'request-param-count';
-  badge.textContent = String(queryItems.length);
-  heading.appendChild(badge);
-  section.appendChild(heading);
-
-  if (queryItems.length) {
-    const list = document.createElement('div');
-    list.className = 'request-query-list';
-    for (const item of queryItems) {
-      const row = document.createElement('div');
-      row.className = 'request-query-row';
-      const key = document.createElement('span');
-      key.className = 'request-query-key';
-      key.textContent = item.name || '';
-      const value = document.createElement('span');
-      value.className = 'request-query-value';
-      value.textContent = item.value ?? '';
-      row.append(key, value);
-      list.appendChild(row);
-    }
-    section.appendChild(list);
-  }
-
-  el.requestParamsContent.appendChild(section);
-}
-
-function appendFormDataParameters(items) {
-  const section = document.createElement('section');
-  section.className = 'request-param-section';
-
-  const heading = document.createElement('div');
-  heading.className = 'request-param-title';
-  heading.textContent = t('formData');
+  heading.textContent = title;
   const badge = document.createElement('span');
   badge.className = 'request-param-count';
   badge.textContent = String(items.length);
   heading.appendChild(badge);
   section.appendChild(heading);
 
-  if (items.length) {
-    const list = document.createElement('div');
-    list.className = 'request-query-list request-form-data-list';
-    for (const item of items) {
-      const row = document.createElement('div');
-      row.className = 'request-query-row';
-      const key = document.createElement('span');
-      key.className = 'request-query-key';
-      key.textContent = item.name;
-      const value = document.createElement('span');
-      value.className = 'request-query-value';
+  const list = document.createElement('div');
+  list.className = isFormData ? 'request-query-list request-form-data-list' : 'request-query-list';
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'request-query-row';
+    const key = document.createElement('span');
+    key.className = 'request-query-key';
+    key.textContent = item.name || '';
+    const value = document.createElement('span');
+    value.className = 'request-query-value';
+    const text = document.createElement('span');
+    text.className = 'request-param-value-text';
+    const copyValue = item.isFile ? item.fileName || '' : item.value ?? '';
+    text.textContent = item.isFile
+      ? [t('formDataFile', item.fileName), item.contentType, formatFileSize(item.fileSize)].filter(Boolean).join(' · ')
+      : copyValue;
 
-      if (item.isFile) {
-        const fileInfo = [t('formDataFile', item.fileName), item.contentType, formatFileSize(item.fileSize)].filter(Boolean);
-        value.textContent = fileInfo.join(' · ');
-      } else {
-        value.textContent = item.value;
-      }
-      row.append(key, value);
-      list.appendChild(row);
-    }
-    section.appendChild(list);
+    const actions = document.createElement('span');
+    actions.className = 'json-field-actions';
+    const copyButton = document.createElement('button');
+    copyButton.type = 'button';
+    copyButton.className = 'json-copy-btn';
+    copyButton.title = item.isFile ? t('copyFileName') : t('copyFullFieldValue');
+    copyButton.setAttribute('aria-label', item.isFile
+      ? `${t('copyFileName')} (${item.name})` : t('copyFieldValue', item.name));
+    copyButton.appendChild(createSvgIcon(['M9 9h10v10H9zM5 15H4V5h10v1']));
+    copyButton.addEventListener('click', () => copyText(String(copyValue), copyButton));
+    actions.appendChild(copyButton);
+    value.append(text, actions);
+    row.append(key, value);
+    list.appendChild(row);
   }
-
+  section.appendChild(list);
   el.requestParamsContent.appendChild(section);
 }
 
 // 同时展示 URL Query 与请求 Body，让选中接口的请求和响应无需切换即可核对。
 function renderRequestParameters(record) {
+  const cacheKey = record ? `${record.id}|${state.ignoredQueryParams.join(',')}` : '';
+  if (cacheKey && el.requestParamsContent.dataset.cacheKey === cacheKey) return;
+  el.requestParamsContent.dataset.cacheKey = cacheKey;
   el.requestParamsContent.innerHTML = '';
   el.requestParamsMeta.textContent = '';
   if (!record) {
@@ -1543,15 +911,21 @@ function renderRequestParameters(record) {
   const queryItems = filteredQueryItems(record);
   const formDataItems = getFormDataItems(record);
   const body = formDataItems === null ? getRequestBodyValue(record) : formDataItems;
-  el.requestParamsMeta.textContent = t('parameterSummary', [
-    queryItems.length,
-    body === null ? t('bodyAbsent') : t('bodyPresent'),
-  ]);
-  appendQueryParameters(queryItems);
-  if (formDataItems !== null) {
-    appendFormDataParameters(formDataItems);
-  } else {
-    appendRequestParamSection(t('requestBody'), body);
+  // 空表单没有字段；JSON 的空对象、空数组和显式 null 则都是实际 Body。
+  const hasBody = formDataItems !== null
+    ? formDataItems.length > 0
+    : body !== null || Boolean(record.postData?.text?.trim());
+  // 标题只汇总非空参数数量，普通 Body 已有分区标题，不再重复提示有无。
+  const parameterCounts = [];
+  if (queryItems.length) parameterCounts.push(t('queryParameterCount', queryItems.length));
+  if (formDataItems?.length) parameterCounts.push(t('formDataParameterCount', formDataItems.length));
+  el.requestParamsMeta.textContent = !queryItems.length && !hasBody
+    ? t('noRequestParameters')
+    : parameterCounts.join(' · ');
+  if (queryItems.length) appendParameterList(t('queryParameters'), queryItems);
+  if (hasBody) {
+    if (formDataItems !== null) appendParameterList(t('formData'), formDataItems, true);
+    else appendRequestParamSection(t('requestBody'), body);
   }
 }
 
@@ -1567,43 +941,62 @@ function clearPreviewSearchMatches() {
 function setPreviewMatchIndex(index, shouldScroll = true) {
   const matches = state.previewMatches;
   if (!matches.length) return;
-
   state.previewMatchIndex = (index + matches.length) % matches.length;
-  for (const item of matches) item.classList.remove('json-match-active');
-
-  const current = matches[state.previewMatchIndex];
-  current.classList.add('json-match-active');
+  const match = matches[state.previewMatchIndex];
+  if (match.parents) {
+    // 按父级顺序打开所需范围；其他范围及手动展开状态保持原样。
+    for (const path of match.parents) {
+      const details = [...el.previewContent.querySelectorAll('details[data-json-path]')]
+        .find(node => node.dataset.jsonPath === path);
+      if (details) {
+        details.open = true;
+        details.dispatchEvent(new Event('json-reveal'));
+      }
+    }
+  }
+  for (const node of el.previewContent.querySelectorAll('.json-match-active')) node.classList.remove('json-match-active');
+  const current = match.element || [...el.previewContent.querySelectorAll('[data-match-path]')]
+    .find(node => node.dataset.matchPath === match.path);
+  current?.classList.add('json-match-active');
   el.previewMatchCount.textContent = t('searchMatchCount', [state.previewMatchIndex + 1, matches.length]);
-
-  if (shouldScroll) {
-    requestAnimationFrame(() => current.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+  if (current && shouldScroll) {
+    const recordId = state.selectedId;
+    requestAnimationFrame(() => {
+      if (state.selectedId === recordId && current.isConnected) current.scrollIntoView({ block: 'center' });
+    });
   }
 }
 
-function renderPreviewSearchMatches(query) {
+function renderPreviewSearchMatches(query, data) {
   if (!query) {
     clearPreviewSearchMatches();
     return;
   }
-
-  state.previewMatches = [...el.previewContent.querySelectorAll('.json-match, .text-match')];
-  if (!state.previewMatches.length) {
-    clearPreviewSearchMatches();
-    return;
+  if (data !== undefined) {
+    const cached = state.previewSearchIndex;
+    if (!cached || cached.data !== data || cached.query !== query || cached.sort !== state.previewSortOrder) {
+      state.previewSearchIndex = { data, query, sort: state.previewSortOrder, matches: collectJsonSearchMatches(data, query) };
+    }
+    state.previewMatches = state.previewSearchIndex.matches;
+  } else {
+    state.previewMatches = [...el.previewContent.querySelectorAll('.text-match')].map(element => ({ element }));
   }
-
   el.previewSearchMatches.hidden = false;
   el.previewMatchPrevBtn.disabled = state.previewMatches.length < 2;
   el.previewMatchNextBtn.disabled = state.previewMatches.length < 2;
-  if (state.previewMatchIndex < 0 || state.previewMatchIndex >= state.previewMatches.length) {
-    state.previewMatchIndex = 0;
+  if (!state.previewMatches.length) {
+    state.previewMatchIndex = -1;
+    el.previewMatchCount.textContent = t('searchMatchCount', [0, 0]);
+    return;
   }
-  setPreviewMatchIndex(state.previewMatchIndex);
+  setPreviewMatchIndex(Math.max(state.previewMatchIndex, 0));
 }
 
 function renderPreview(record) {
   el.previewContent.innerHTML = '';
+  const matchIndex = state.previewMatchIndex;
   clearPreviewSearchMatches();
+  state.previewMatchIndex = matchIndex;
   const raw = record.responseBody || '';
   const trimmed = typeof raw === 'string' ? raw.trim() : '';
   const query = el.previewSearchInput.value.trim().toLowerCase();
@@ -1622,16 +1015,12 @@ function renderPreview(record) {
   if (record.mimeType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
     const data = getResponseJson(record, trimmed);
     if (data !== undefined) {
-      if (query && !nodeMatches(data, null, query)) {
-        const placeholder = document.createElement('div');
-        placeholder.className = 'preview-placeholder';
-        placeholder.textContent = t('noMatchingJson');
-        el.previewContent.appendChild(placeholder);
-        return;
-      }
       el.previewContent.appendChild(buildJsonNode(data, null, 0, query, openStates));
+      for (const line of el.previewContent.querySelectorAll('.json-long-line[data-match-path]')) {
+        if (state.previewExpandedValues.has(line.dataset.matchPath)) line.querySelector('.json-expand-btn')?.click();
+      }
       state.previewRecordId = record.id;
-      renderPreviewSearchMatches(query);
+      renderPreviewSearchMatches(query, data);
       return;
     }
   }
@@ -1653,6 +1042,17 @@ function renderPreview(record) {
   renderPreviewSearchMatches(query);
 }
 
+// 修改规则只更新状态文案，不重建当前 JSON 或请求 Body。
+function renderDetailMeta(record) {
+  if (!record) return;
+  const businessMeta = record.businessState === 'failure'
+    ? ` · ${record.businessReason ? t('businessFailureMetaWithReason', record.businessReason) : t('businessFailureMeta')}`
+    : '';
+  el.detailMeta.textContent = `${record.status}${record.statusText ? ` ${record.statusText}` : ''}${record.mimeType ? ` · ${record.mimeType}` : ''}${record.time != null ? ` · ${Math.round(record.time)} ms` : ''}${businessMeta}`;
+  el.detailMeta.title = el.detailMeta.textContent;
+  el.detailMeta.classList.toggle('business-failed-meta', record.businessState === 'failure');
+}
+
 function renderDetail() {
   const record = getSelectedRecord();
   el.copyFullBtn.disabled = !record;
@@ -1660,51 +1060,42 @@ function renderDetail() {
   el.copyPathBtn.disabled = !record;
   el.copyPathQueryBtn.disabled = !record;
   el.copyTokenBtn.disabled = !record || !getTokenFromRecord(record);
+  el.copyCurlBtn.disabled = !record;
   renderRequestParameters(record);
   if (!record) {
     clearPreviewSearchMatches();
+    state.previewSearchIndex = null;
+    if (state.previewRecordId !== null) {
+      el.previewContent.innerHTML = '';
+      el.detailMeta.textContent = t('selectRequest');
+      state.previewRecordId = null;
+    }
     return;
   }
 
   preservePreviewOpenStates(record);
 
-  const businessMeta = record.businessState === 'failure'
-    ? ` · ${record.businessReason ? t('businessFailureMetaWithReason', record.businessReason) : t('businessFailureMeta')}`
-    : '';
-  el.detailMeta.textContent = `${record.status}${record.statusText ? ` ${record.statusText}` : ''}${record.mimeType ? ` · ${record.mimeType}` : ''}${record.time != null ? ` · ${Math.round(record.time)} ms` : ''}${businessMeta}`;
-  el.detailMeta.classList.toggle('business-failed-meta', record.businessState === 'failure');
+  renderDetailMeta(record);
+  const scrollTop = el.previewContent.scrollTop;
+  const sameRecord = state.previewRecordId === record.id;
   renderPreview(record);
+  if (sameRecord && !el.previewSearchInput.value.trim()) el.previewContent.scrollTop = scrollTop;
 }
 
-async function copyText(text) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand('copy');
-    textarea.remove();
-  }
-
-  el.copyStatus.textContent = t('copied');
-  clearTimeout(copyText.timer);
-  copyText.timer = setTimeout(() => { el.copyStatus.textContent = ''; }, 1200);
+function copyText(text, trigger = null) {
+  return panelUi.copyText(text, trigger);
 }
 
 el.filterInput.addEventListener('input', () => {
   el.filterClearBtn.hidden = !el.filterInput.value;
-  render();
+  renderRequestList();
 });
 
 el.filterClearBtn.addEventListener('click', () => {
   el.filterInput.value = '';
   el.filterClearBtn.hidden = true;
   el.filterInput.focus();
-  render();
+  renderRequestList();
 });
 el.previewSearchInput.addEventListener('input', () => {
   const query = el.previewSearchInput.value.trim().toLowerCase();
@@ -1724,6 +1115,14 @@ el.previewSearchInput.addEventListener('input', () => {
 el.previewMatchPrevBtn.addEventListener('click', () => setPreviewMatchIndex(state.previewMatchIndex - 1));
 el.previewMatchNextBtn.addEventListener('click', () => setPreviewMatchIndex(state.previewMatchIndex + 1));
 // 切换排序后立即刷新当前响应，沿用已有搜索条件。
+el.requestSortBtn.addEventListener('click', () => {
+  state.requestSortOrder = state.requestSortOrder === 'newest' ? 'oldest' : 'newest';
+  try { localStorage.setItem(REQUEST_SORT_STORAGE_KEY, state.requestSortOrder); } catch {}
+  // 仅重排列表，不重建请求参数和 JSON；选中行在新顺序中继续保持可见。
+  renderRequestList();
+  scrollSelectedRowIntoView();
+});
+
 el.previewSortBtn.addEventListener('click', () => {
   // 字母模式高亮显示 A–Z 图标，原始模式显示带序号的列表图标。
   const alphabetical = state.previewSortOrder !== 'alphabetical';
@@ -1737,52 +1136,41 @@ el.previewSortBtn.addEventListener('click', () => {
   renderDetail();
 });
 
-el.copyFullBtn.addEventListener('click', () => {
+el.copyFullBtn.addEventListener('click', event => {
   const record = getSelectedRecord();
-  if (record) copyText(formatRecord(record));
+  if (record) copyText(formatRecord(record), event.currentTarget);
 });
 
-el.copySimpleBtn.addEventListener('click', () => {
+el.copySimpleBtn.addEventListener('click', event => {
   const record = getSelectedRecord();
-  if (record) copyText(formatRecordSimple(record));
+  if (record) copyText(formatRecordSimple(record), event.currentTarget);
 });
 
-el.copyPathBtn.addEventListener('click', () => {
+el.copyPathBtn.addEventListener('click', event => {
   const record = getSelectedRecord();
-  if (record) copyText(getSimplePath(record.url, false));
+  if (record) copyText(getSimplePath(record.url, false), event.currentTarget);
 });
 
-el.copyPathQueryBtn.addEventListener('click', () => {
+el.copyPathQueryBtn.addEventListener('click', event => {
   const record = getSelectedRecord();
-  if (record) copyText(formatPathWithParams(record));
+  if (record) copyText(formatPathWithParams(record), event.currentTarget);
 });
 
-el.copyTokenBtn.addEventListener('click', () => {
+el.copyCurlBtn.addEventListener('click', event => {
+  const record = getSelectedRecord();
+  if (record) copyText(formatCurl(record), event.currentTarget);
+});
+
+el.copyTokenBtn.addEventListener('click', event => {
   const record = getSelectedRecord();
   const token = getTokenFromRecord(record);
-  if (token) copyText(token);
+  if (token) copyText(token, event.currentTarget);
 });
 
 el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
 el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
 el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
 el.showUrlQueryInput.checked = state.showUrlQuery;
-el.paramFilterBtn.setAttribute('aria-expanded', 'false');
-
-el.paramFilterBtn.addEventListener('click', () => {
-  const willShow = el.paramFilterPanel.hidden;
-  el.paramFilterPanel.hidden = !willShow;
-  el.paramFilterBtn.setAttribute('aria-expanded', String(willShow));
-  if (willShow) {
-    el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
-    el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
-    el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
-    el.showUrlQueryInput.checked = state.showUrlQuery;
-    el.ignoredParamsInput.focus();
-    el.ignoredParamsInput.select();
-  }
-});
-
 el.ignoredParamsInput.addEventListener('input', event => {
   setIgnoredQueryParamsFromInput(event.target.value);
 });
@@ -1835,6 +1223,10 @@ el.resetIgnoredParamsBtn.addEventListener('click', () => {
 });
 
 function clearRequestRecords(placeholderText) {
+  clearTimeout(state.previewSearchTimer);
+  state.previewSearchIndex = null;
+  state.previewExpandedValues = new Set();
+  el.requestParamsContent.dataset.cacheKey = '';
   state.records = [];
   state.selectedId = null;
   state.nextId = 1;
@@ -1884,9 +1276,12 @@ document.addEventListener('keydown', event => {
     return;
   }
 
-  if (isTypingTarget(event.target)) return;
+  if (panelUi.isOverlayOpen() || isTypingTarget(event.target)) return;
 
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    // 仅列表焦点切换请求；JSON、参数和工具栏保留各自的键盘行为。
+    if (!(event.target instanceof Element) || !el.requestList.contains(event.target)
+      || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     event.preventDefault();
     moveSelection(event.key === 'ArrowDown' ? 1 : -1);
     return;
@@ -1899,7 +1294,7 @@ document.addEventListener('keydown', event => {
     const record = getSelectedRecord();
     if (!record) return;
     event.preventDefault();
-    copyText(formatRecordSimple(record));
+    copyText(formatRecordSimple(record), el.copySimpleBtn);
     return;
   }
 
@@ -1907,7 +1302,7 @@ document.addEventListener('keydown', event => {
     const record = getSelectedRecord();
     if (!record) return;
     event.preventDefault();
-    copyText(formatPathWithParams(record));
+    copyText(formatPathWithParams(record), el.copyPathQueryBtn);
   }
 });
 
@@ -2008,6 +1403,12 @@ function endResize(event) {
 
 el.splitter.addEventListener('pointerup', endResize);
 el.splitter.addEventListener('pointercancel', endResize);
+el.splitter.addEventListener('dblclick', () => {
+  // 清除当前方向的手动尺寸，交回 CSS 百分比，使窗口缩放后仍保持默认比例。
+  const stacked = isStackedLayout();
+  document.documentElement.style.removeProperty(stacked ? '--list-height' : '--list-width');
+  localStorage.removeItem(stacked ? 'apiCopyListHeight' : 'apiCopyListWidth');
+});
 
 function setRequestListSize(px) {
   const total = isStackedLayout() ? el.listPane.clientWidth : el.listPane.clientHeight;
@@ -2043,6 +1444,11 @@ function endRequestParamsResize(event) {
 
 el.requestParamsSplitter.addEventListener('pointerup', endRequestParamsResize);
 el.requestParamsSplitter.addEventListener('pointercancel', endRequestParamsResize);
+el.requestParamsSplitter.addEventListener('dblclick', () => {
+  // 列表与参数共用比例，恢复后横向和纵向布局都使用默认的 65% / 35%。
+  document.documentElement.style.removeProperty('--request-list-size');
+  localStorage.removeItem(REQUEST_LIST_SIZE_STORAGE_KEY);
+});
 
 // 普通网页预览使用本地样例走同一套渲染流程，不发送任何模拟网络请求。
 async function loadPreviewRequests() {

@@ -1,0 +1,16 @@
+API Copy 0.5.0 — testing instructions. No account, username or password is required. "Other info" means the steps below, not credentials.
+
+This extension adds an API Copy tab INSIDE Microsoft Edge DevTools (F12). It has no toolbar popup. Open API Copy BEFORE triggering requests. If hidden, find it in the >> tab overflow menu.
+
+1. Install the extension and open https://jsonplaceholder.typicode.com in a normal tab. Press F12, select API Copy, then Esc to open the Console drawer.
+2. Run this public GET request:
+fetch('/posts?userId=1').then(r=>r.json()).then(console.log)
+3. Close the Console drawer with Esc. Select GET /posts in API Copy. Query shows userId=1 and Preview shows the JSON posts array.
+4. For JSON Body, run in Console:
+fetch('/posts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'API Copy test',body:'Demo data',userId:1})}).then(r=>r.json()).then(console.log)
+5. Select POST /posts. Check Body and JSON response. Test path, path+parameters, concise/full request and cURL copying. Token copying requires an Authorization/Token header. Copy cURL generates text without executing it.
+6. Test JSON expansion, field-value copying, search/match navigation and alphabetical/original field order. The list sort icon switches oldest/newest first without resetting the JSON view.
+7. Test method/HTTP-failure filters. Settings has Display, Filters and Business rules tabs; custom rules apply after saving. Unknown business status is expected if the public response lacks business fields.
+8. Drag splitters and double-click to reset. Narrow windows show copy actions as icons with tooltips.
+
+Only XHR/Fetch requests made after opening API Copy are captured. Page reload clears records. Static/download resources are excluded. Captured data stays local. The public service simulates POST responses.

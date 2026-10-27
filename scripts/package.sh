@@ -20,6 +20,6 @@ zip -q -r "$OUT" \
   devtools.html devtools.js \
   panel.html panel.css panel.js \
   icon16.png icon48.png icon128.png \
-  _locales
+  _locales vendor src
 
 echo "$OUT"
