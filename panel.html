@@ -13,7 +13,7 @@
       <div class="toolbar-main">
         <div class="panel-title"><span class="panel-mark" aria-hidden="true">A</span><span>API Copy</span></div>
         <div class="filter-wrap">
-          <input id="filterInput" class="filter" type="text" placeholder="过滤请求路径、方法或状态" data-i18n-placeholder="requestFilterPlaceholder" />
+          <input id="filterInput" class="filter" type="text" placeholder="按 URL、方法或状态筛选" data-i18n-placeholder="requestFilterPlaceholder" />
           <button id="filterClearBtn" class="filter-clear" type="button" title="清空请求筛选" aria-label="清空请求筛选" data-i18n-title="clearRequestFilter" data-i18n-aria-label="clearRequestFilter" hidden>
             <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
           </button>
@@ -123,7 +123,7 @@
               </svg>
               <span class="sort-label">A–Z</span>
             </button>
-            <input id="previewSearchInput" class="preview-search" type="search" placeholder="搜索响应字段 / 值" data-i18n-placeholder="previewSearchPlaceholder" autocomplete="off" />
+            <input id="previewSearchInput" class="preview-search" type="search" placeholder="搜索响应字段 / 值" data-i18n-placeholder="previewSearchPlaceholder" title="Enter：下一个匹配项；Shift + Enter：上一个匹配项" data-i18n-title="previewSearchHint" autocomplete="off" />
             <div id="previewSearchMatches" class="preview-search-matches" hidden>
               <span id="previewMatchCount" class="preview-match-count" aria-live="polite"></span>
               <button id="previewMatchPrevBtn" class="preview-match-btn" type="button" title="上一个匹配项" aria-label="上一个匹配项" data-i18n-title="previousMatch" data-i18n-aria-label="previousMatch">

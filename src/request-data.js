@@ -6,30 +6,9 @@ globalThis.ApiCopyRequestData = (() => {
     return String(request?._resourceType || request?.request?._resourceType || '').toLowerCase();
   }
 
-  function isApiRequest(record) {
-    return record.resourceType === 'xhr' || record.resourceType === 'fetch';
-  }
-
-  function isFileDownload(request) {
-    const headers = request.response?.headers || [];
-    const disposition = headers.find(item => item.name?.toLowerCase() === 'content-disposition')?.value || '';
-    if (/\battachment\b|\bfilename\*?\s*=/i.test(disposition)) return true;
-
-    const contentType = headers.find(item => item.name?.toLowerCase() === 'content-type')?.value
-      || request.response?.content?.mimeType
-      || '';
-    const mimeType = contentType.split(';', 1)[0].trim().toLowerCase();
-    return mimeType.startsWith('image/')
-      || mimeType.startsWith('audio/')
-      || mimeType.startsWith('video/')
-      || mimeType.startsWith('font/')
-      || mimeType.startsWith('application/vnd.openxmlformats-officedocument.')
-      || mimeType.startsWith('application/vnd.oasis.opendocument.')
-      || mimeType.startsWith('application/vnd.ms-excel')
-      || mimeType.startsWith('application/vnd.ms-powerpoint')
-      || ['application/octet-stream', 'application/pdf', 'application/zip', 'application/x-zip-compressed',
-        'application/gzip', 'application/x-tar', 'application/msword', 'application/x-download',
-        'application/force-download', 'text/csv', 'text/tab-separated-values'].includes(mimeType);
+  // 与 Chromium Network 的 Fetch/XHR 分类一致，使用 HAR 中的资源类型。
+  function isFetchXhrType(resourceType) {
+    return ['xhr', 'fetch', 'eventsource'].includes(resourceType);
   }
 
   function headersToObject(headers = []) {
@@ -277,5 +256,5 @@ globalThis.ApiCopyRequestData = (() => {
     return hasFiles ? '# Replace /path/to/ with your local file paths before running.\n' + command : command;
   }
 
-  return { normalizeResourceType, isApiRequest, isFileDownload, headersToObject, tryPretty, getResponseJson, getRequestBody, isFormDataMimeType, createFormDataItem, formatFileSize, parseUrlEncodedFormData, parseMultipartFormData, getFormDataItems, getRequestBodyValue, decodeUrlComponent, decodeUrlPath, formatReadableSearch, getTokenFromRecord, formatCurl };
+  return { normalizeResourceType, isFetchXhrType, headersToObject, tryPretty, getResponseJson, getRequestBody, isFormDataMimeType, createFormDataItem, formatFileSize, parseUrlEncodedFormData, parseMultipartFormData, getFormDataItems, getRequestBodyValue, decodeUrlComponent, decodeUrlPath, formatReadableSearch, getTokenFromRecord, formatCurl };
 })();

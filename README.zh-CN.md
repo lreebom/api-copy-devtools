@@ -1,6 +1,6 @@
 # API Copy
 
-当前版本：**0.5.0**。
+当前版本：**0.5.2**。
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
@@ -10,11 +10,11 @@ API Copy 是一个面向接口联调和问题排查的 Chrome DevTools 扩展。
 
 ## 功能
 
-- 只展示 XHR / Fetch 请求。
+- 按 Chrome Network 的 Fetch/XHR 分类展示 XHR、Fetch 和 EventSource。通过这些方式发起的文件请求也会出现在列表中。
 - 快捷筛选：按 GET、POST 或其他方法筛选，区分 HTTP／业务失败，并支持自定义慢请求阈值。
 - 界面自动跟随 Chrome 语言，内置简体中文和英文。
 - 快速复制：
-  - **复制路径**：只复制接口路径。
+  - **复制路径**：按请求列表显示复制路径，跟随路径前缀截断和 Query 显示设置。
   - **复制路径 + 参数**：包含 Query；有 Body 的请求会同时带 Body。
   - **复制精简请求**：请求 + 响应，不包含 Header。
   - **复制完整请求**：请求 + 响应，包含 Header。
@@ -179,12 +179,12 @@ api-copy-devtools/
 会生成：
 
 ```text
-dist/api-copy-devtools-v0.5.0.zip
+dist/api-copy-devtools-v0.5.2.zip
 ```
 
 ZIP 根目录直接包含 `manifest.json`，可用于 Chrome Web Store 或 Microsoft Edge Add-ons 上传。安装包包含 `src/`、`vendor/` 和第三方许可证，不包含测试代码、大 JSON 样例、截图及商店材料。
 
-0.5.0 商店更新说明见 [发布说明](./store-assets/RELEASE_NOTES.md)。
+0.5.2 商店更新说明见 [发布说明](./store-assets/RELEASE_NOTES.md)。
 
 ## 隐私
 

@@ -2,7 +2,7 @@
 const { t, localizeDocument } = ApiCopyI18n;
 const { parseJsonText } = ApiCopyJson;
 const {
-  normalizeResourceType, isApiRequest, isFileDownload, headersToObject,
+  normalizeResourceType, isFetchXhrType, headersToObject,
   tryPretty, getResponseJson, getRequestBody, formatFileSize,
   getFormDataItems, getRequestBodyValue, decodeUrlComponent, decodeUrlPath,
   formatReadableSearch, getTokenFromRecord, formatCurl,
@@ -207,8 +207,7 @@ function decodeContent(content, encoding) {
 function addRequest(request) {
   if (!request?.request?.url) return;
   const resourceType = normalizeResourceType(request);
-  if (resourceType !== 'xhr' && resourceType !== 'fetch') return;
-  if (isFileDownload(request)) return;
+  if (!isFetchXhrType(resourceType)) return;
   if (isIgnoredRequestUrl(request.request.url)) return;
 
   // 使用请求特征去重，避免 DevTools 重复回调导致列表重复。
@@ -539,9 +538,11 @@ function trimDisplayPath(pathname) {
 function filteredRecords() {
   const keyword = el.filterInput.value.trim().toLowerCase();
   return state.records.filter(record => {
-    if (!isApiRequest(record) || !requestFilters.matches(record)) return false;
+    if (!isFetchXhrType(record.resourceType) || !requestFilters.matches(record)) return false;
     if (isIgnoredRequestUrl(record.url)) return false;
     if (!keyword) return true;
+    // 原始 URL 可搜索域名、截断的路径前缀和隐藏的 Query 参数。
+    if (record.url.toLowerCase().includes(keyword)) return true;
     const businessText = record.businessState === 'failure' ? `${t('businessFailure')} ${record.businessReason || ''}` : '';
     return `${record.method} ${record.status} ${getDisplayUrl(record.url, true)} ${businessText}`.toLowerCase().includes(keyword);
   });
@@ -655,7 +656,7 @@ function createRequestRow(record, index) {
   const rowActions = document.createElement('span');
   rowActions.className = 'row-copy-actions';
   rowActions.append(
-    createRowCopyButton('path', t('copyPath'), button => copyText(getSimplePath(record.url, false), button)),
+    createRowCopyButton('path', t('copyPath'), button => copyText(getDisplayUrl(record.url), button)),
     createRowCopyButton('query', t('copyPathWithParams'), button => copyText(formatPathWithParams(record), button)),
     createRowCopyButton('simple', t('copySimpleRequest'), button => copyText(formatRecordSimple(record), button)),
   );
@@ -1112,6 +1113,20 @@ el.previewSearchInput.addEventListener('input', () => {
     renderDetail();
   }, PREVIEW_SEARCH_DELAY);
 });
+el.previewSearchInput.addEventListener('keydown', event => {
+  // 中文输入法确认候选词时不切换命中项；快捷键只作用于搜索框。
+  if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229
+    || event.ctrlKey || event.metaKey || event.altKey) return;
+  event.preventDefault();
+  // 输入后立即回车时，先完成当前搜索，避免沿用上一个关键词的结果。
+  if (state.previewSearchTimer !== null) {
+    clearTimeout(state.previewSearchTimer);
+    state.previewSearchTimer = null;
+    renderDetail();
+  }
+  if (!el.previewSearchInput.value.trim()) return;
+  setPreviewMatchIndex(state.previewMatchIndex + (event.shiftKey ? -1 : 1));
+});
 el.previewMatchPrevBtn.addEventListener('click', () => setPreviewMatchIndex(state.previewMatchIndex - 1));
 el.previewMatchNextBtn.addEventListener('click', () => setPreviewMatchIndex(state.previewMatchIndex + 1));
 // 切换排序后立即刷新当前响应，沿用已有搜索条件。
@@ -1148,7 +1163,7 @@ el.copySimpleBtn.addEventListener('click', event => {
 
 el.copyPathBtn.addEventListener('click', event => {
   const record = getSelectedRecord();
-  if (record) copyText(getSimplePath(record.url, false), event.currentTarget);
+  if (record) copyText(getDisplayUrl(record.url), event.currentTarget);
 });
 
 el.copyPathQueryBtn.addEventListener('click', event => {

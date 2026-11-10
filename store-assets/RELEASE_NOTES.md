@@ -1,3 +1,39 @@
+# API Copy 0.5.2
+
+更新日期：2026-11-10。
+
+## 简体中文
+
+- 「复制路径」跟随请求列表的路径前缀截断和 Query 显示设置。
+- 请求列表支持搜索原始 URL，可匹配域名、被截掉的路径前缀和隐藏的 Query 参数。
+- 请求类型与 Chromium 的 Fetch/XHR 分类对齐，纳入 EventSource 和由 Fetch/XHR 发起的下载请求。
+
+## English
+
+- Copy Path follows the request list’s path trimming and Query visibility settings.
+- Search requests by original URL, including the domain, hidden path prefixes, and hidden Query parameters.
+- Align request types with Chromium’s Fetch/XHR category, including EventSource and downloads initiated by Fetch/XHR.
+
+---
+
+# API Copy 0.5.1
+
+发布日期：2026-10-28。
+
+## 简体中文
+
+JSON 搜索支持 Enter 跳到下一个命中项，Shift + Enter 跳到上一个，首尾循环切换，并兼容中文输入法确认。
+
+优化安装后的文字可读性：适当提高工具栏、筛选栏、方法与状态码、表头和辅助信息字号，调整方法列宽和行距，保留 JSON、请求参数正文与列表的紧凑布局。
+
+## English
+
+Navigate JSON search matches with Enter / Shift + Enter, with wraparound and input-method composition support.
+
+Improve text readability with larger toolbar, filter, method/status, column heading and helper text. Adjust the method column width and line spacing while preserving the compact request list, JSON and parameter content layout.
+
+---
+
 # API Copy 0.5.0
 
 发布日期：2026-10-22。以下文案可用于 Chrome Web Store / Microsoft Edge Add-ons 更新说明。

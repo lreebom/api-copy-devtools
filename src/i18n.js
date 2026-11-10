@@ -89,6 +89,7 @@ globalThis.ApiCopyI18n = (() => {
     sortOriginalTitle: '当前：原始 JSON 顺序；点击切换为按字母排序',
     originalOrderShort: '原序',
     previousMatch: '上一个匹配项',
+    previewSearchHint: 'Enter：下一个匹配项；Shift + Enter：上一个匹配项',
     nextMatch: '下一个匹配项',
     searchMatchCount: '$1 / $2',
     requestParameters: '请求参数',

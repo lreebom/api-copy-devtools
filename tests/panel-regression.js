@@ -76,6 +76,44 @@ frame.addEventListener('load', async () => {
     doc.querySelector('[data-method="all"]').click();
     requestSort.click();
     check([...rows()].map(row=>row.dataset.recordId).join(',')===originalOrder.join(','), '再次点击恢复正序');
+    const requestSearch = doc.querySelector('#filterInput');
+    const originalUrl = panel.getSelectedRecord().url;
+    const displayPath = rows()[6].querySelector('.url').textContent;
+    for (const keyword of [new URL(originalUrl).hostname.toUpperCase(), '/api/his/his/', '_t=1789180200000', originalUrl, 'cuOwnership']) {
+      requestSearch.value = keyword;
+      requestSearch.dispatchEvent(new panel.Event('input', { bubbles: true }));
+      check([...rows()].some(row => row.dataset.recordId === '7' && row.querySelector('.url').textContent === displayPath),
+        `请求筛选匹配 ${keyword} 并保持路径展示`);
+    }
+    doc.querySelector('[data-method="POST"]').click();
+    check(rows().length === 0, 'URL 搜索与请求方法筛选同时生效');
+    doc.querySelector('[data-method="all"]').click();
+    doc.querySelector('#filterClearBtn').click();
+    check(rows().length === 8, '清空请求筛选后恢复列表');
+    const prefixInput = doc.querySelector('#pathPrefixSegmentsInput');
+    const queryToggle = doc.querySelector('#showUrlQueryInput');
+    const savedPrefix = prefixInput.value;
+    const savedShowQuery = queryToggle.checked;
+    prefixInput.value = '3';
+    prefixInput.dispatchEvent(new panel.Event('input'));
+    for (const showQuery of [false, true]) {
+      queryToggle.checked = showQuery;
+      queryToggle.dispatchEvent(new panel.Event('change'));
+      const row = doc.querySelector('.request-row[data-record-id="7"]');
+      const displayedUrl = row.querySelector('.url').textContent;
+      check(displayedUrl.startsWith('/his/networkConfigSpec/') && displayedUrl.includes('?') === showQuery,
+        '列表按配置截断前缀和显示 Query');
+      doc.querySelector('#copyPathBtn').click();
+      await Promise.resolve();
+      check(copied === displayedUrl, '工具栏复制路径与列表显示一致');
+      row.querySelector('.row-copy-path').click();
+      await Promise.resolve();
+      check(copied === displayedUrl, '行内复制路径与列表显示一致');
+    }
+    prefixInput.value = savedPrefix;
+    prefixInput.dispatchEvent(new panel.Event('input'));
+    queryToggle.checked = savedShowQuery;
+    queryToggle.dispatchEvent(new panel.Event('change'));
     const parsed = panel.ApiCopyJson.parseJsonText('{"id":2090730954778415427,"decimal":1.0000000000000000001,"huge":1e400,"text":"2090730954778415427"}');
     const formatted = panel.ApiCopyJson.copyableJsonValue(parsed);
     check(formatted.includes('2090730954778415427') && formatted.includes('1.0000000000000000001') && formatted.includes('1e400'), '长整数、高精度小数和大指数无损复制');
@@ -98,6 +136,19 @@ frame.addEventListener('load', async () => {
       response:{status:200,headers:[],content:{mimeType:'application/json'}},
       getContent: done => { if (delayed) callback = done; else done(body,''); },
     });
+    const exportRequest = request('https://example.test/export.csv', 'id,name\n1,Demo');
+    exportRequest.response.headers = [
+      { name: 'Content-Type', value: 'text/csv' },
+      { name: 'Content-Disposition', value: 'attachment; filename=export.csv' },
+    ];
+    exportRequest.response.content.mimeType = 'text/csv';
+    panel.addRequest(exportRequest);
+    panel.addRequest({ ...request('https://example.test/events', 'data: demo'), _resourceType: 'EventSource' });
+    panel.addRequest({ ...request('https://example.test/preflight', ''), _resourceType: 'preflight' });
+    await waitFor(() => rows().length >= 2);
+    check([...rows()].map(row => row.querySelector('.url').textContent).join(',') === '/export.csv,/events',
+      'Fetch/XHR 分类收录导出请求和 EventSource，排除预检请求');
+    panel.clearRequestRecords('回归测试');
     const data = Array.from({length:10000},(_,id)=>({id,name:`item-${id}`,nested:{label:'shared'}}));
     panel.addRequest(request('https://example.test/a?tag=a&tag=b',JSON.stringify({data})));
     panel.addRequest(request('https://example.test/b',JSON.stringify({data:{name:'second',remark:'x'.repeat(200)}})));
@@ -128,6 +179,27 @@ frame.addEventListener('load', async () => {
     await waitFor(()=>doc.querySelector('#previewMatchCount').textContent === '1 / 1');
     check(doc.querySelector('.json-match-active')?.textContent.includes('item-9999'), '搜索自动跳转到末尾分组的命中项');
     check(doc.querySelector('#previewContent').querySelectorAll('*').length < 10000, '一万条数组单命中时保持惰性分组，不渲染全部元素');
+    search.value='name';search.dispatchEvent(new panel.Event('input'));
+    await waitFor(()=>doc.querySelector('#previewMatchCount').textContent === '1 / 10000');
+    const pressSearchEnter = (options = {}) => {
+      search.focus();
+      search.dispatchEvent(new panel.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true,...options}));
+    };
+    pressSearchEnter();
+    check(doc.querySelector('#previewMatchCount').textContent==='2 / 10000' && doc.activeElement===search
+      && panel.getSelectedRecord().id===1, '搜索框回车切换下一个命中，保留输入焦点和选中请求');
+    pressSearchEnter({shiftKey:true});
+    pressSearchEnter({shiftKey:true});
+    check(doc.querySelector('#previewMatchCount').textContent==='10000 / 10000'
+      && doc.querySelector('.json-match-active')?.textContent.includes('item-9999'), 'Shift+Enter 循环到上一个命中并展开所在数组分组');
+    pressSearchEnter();
+    pressSearchEnter({isComposing:true});
+    pressSearchEnter({ctrlKey:true});
+    check(doc.querySelector('#previewMatchCount').textContent==='1 / 10000', '回车可循环回首项，输入法确认与组合快捷键不切换命中');
+    search.value='item-9999';search.dispatchEvent(new panel.Event('input'));
+    pressSearchEnter();
+    check(doc.querySelector('#previewMatchCount').textContent==='1 / 1'
+      && doc.querySelector('.json-match-active')?.textContent.includes('item-9999'), '快速输入后回车使用最新关键词，单命中保持稳定');
     search.value='name';search.dispatchEvent(new panel.Event('input'));
     await waitFor(()=>doc.querySelector('#previewMatchCount').textContent === '1 / 10000');
     panel.setPreviewMatchIndex(9999, false);
@@ -170,6 +242,9 @@ frame.addEventListener('load', async () => {
     check(search.value === 'name' && doc.querySelector('#previewMatchCount').textContent === '10000 / 10000', '每条请求分别恢复搜索词和当前命中序号');
     search.value='not-found';search.dispatchEvent(new panel.Event('input'));
     await waitFor(()=>doc.querySelector('#previewMatchCount').textContent === '0 / 0');
+    pressSearchEnter();
+    pressSearchEnter({shiftKey:true});
+    check(doc.querySelector('#previewMatchCount').textContent==='0 / 0', '零命中时回车与 Shift+Enter 不产生无效切换');
     check(doc.querySelector('#previewContent').querySelector('details'), '零命中时保留完整 JSON 树');
     search.value='';search.dispatchEvent(new panel.Event('input'));
     await waitFor(()=>doc.querySelector('#previewSearchMatches').hidden);
@@ -296,7 +371,7 @@ frame.addEventListener('load', async () => {
     const bodyValue=bodyCopy.closest('.json-line').querySelector('.json-value');
     check(Math.abs(bodyCopy.getBoundingClientRect().left-bodyValue.getBoundingClientRect().right-4)<1,
       '请求 Body 的复制按钮同样紧跟字段值');
-    check(Math.round(rows()[0].getBoundingClientRect().height)===26 && panel.getComputedStyle(rows()[0].querySelector('.method')).fontSize==='9px'
+    check(Math.round(rows()[0].getBoundingClientRect().height)===26 && panel.getComputedStyle(rows()[0].querySelector('.method')).fontSize==='10px'
       && panel.getComputedStyle(preview).fontSize==='11px' && panel.getComputedStyle(preview.querySelector('.json-summary')).lineHeight==='17px', '实际渲染符合紧凑字号、列表行高与 JSON 行距');
     const fullCopy=doc.querySelector('#copyFullBtn');
     const fullWidth=fullCopy.getBoundingClientRect().width;

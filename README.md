@@ -1,6 +1,6 @@
 # API Copy
 
-Current version: **0.5.0**.
+Current version: **0.5.2**.
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
@@ -14,11 +14,11 @@ In the Network panel, reviewing a full request often means opening requests one 
 - Keep all copy actions together on the toolbar; narrow windows show icons with hover descriptions.
 - Response and Body fields share borderless copy icons with in-place checkmark feedback.
 
-- Shows XHR / Fetch requests only.
+- Matches Chrome Network's Fetch/XHR category (XHR, Fetch, and EventSource), including requests that return files.
 - Filter by request method, HTTP/business failure, or a configurable slow-request threshold.
 - Automatically follows Chrome's UI language, with English and Simplified Chinese included.
 - Fast copy actions:
-  - **Copy Path**: copies only the API path.
+  - **Copy Path**: copies the path as shown in the request list, including Query parameters when enabled.
   - **Copy Path + Params**: includes Query parameters; requests with a Body also include the Body.
   - **Copy Simplified Request**: request + response without headers.
   - **Copy Full Request**: request + response with headers.
@@ -175,7 +175,7 @@ Run:
 Output:
 
 ```text
-dist/api-copy-devtools-v0.5.0.zip
+dist/api-copy-devtools-v0.5.2.zip
 ```
 
 The ZIP root contains `manifest.json` directly and can be uploaded to the Chrome Web Store.
@@ -204,4 +204,4 @@ Copy cURL exports the original full URL, headers and Body for a POSIX shell; dis
 
 Feature modules live in src/. Run pure logic checks with node --test tests/request-features.test.cjs; run the browser checks through tests/panel-regression.html on a local static server.
 
-Release notes for store submissions: [0.5.0 release notes](./store-assets/RELEASE_NOTES.md). Packages include local runtime modules and third-party licenses, excluding tests, large JSON fixtures, screenshots and store materials.
+Release notes for store submissions: [0.5.2 release notes](./store-assets/RELEASE_NOTES.md). Packages include local runtime modules and third-party licenses, excluding tests, large JSON fixtures, screenshots and store materials.

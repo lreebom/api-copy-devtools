@@ -4,6 +4,18 @@
 
 All notable changes to API Copy are documented here.
 
+## 0.5.2 - 2026-11-10
+
+- Copy Path follows the request list’s path trimming and Query visibility settings.
+- Search requests by original URL, including the domain, hidden path prefixes, and hidden Query parameters.
+- Align request types with Chromium’s Fetch/XHR category, including EventSource and downloads initiated by Fetch/XHR.
+
+## 0.5.1 - 2026-10-28
+
+- Navigate JSON search matches with Enter / Shift + Enter, including wraparound, input-method composition and immediate searches.
+- Improve readability with 13px brand, toolbar and filter text, 11px column headings, 10px method/status labels and 12px helper text.
+- Adjust the method column width and line spacing while preserving request paths, JSON and parameter content sizes and compact row heights.
+
 ## 0.5.0 - 2026-10-22
 
 - Add persistent oldest/newest-first request sorting by start time, preserving the selected request and JSON view when toggled.
