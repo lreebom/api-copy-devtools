@@ -1,7 +1,7 @@
 // 响应和请求 Body 共用的 JSON 树：折叠摘要、范围分组与搜索索引都在这里维护。
 globalThis.ApiCopyJsonTree = {
   create({ t, copyText, createSvgIcon, getSortOrder }) {
-    const { isJsonContainer, valueClass, primitiveText, formatJsonPrimitive, textMatches, copyableJsonValue } = ApiCopyJson;
+    const { isJsonContainer, valueClass, primitiveText, formatJsonPrimitive, textMatches, copyableJsonValue, copyableJsonPair } = ApiCopyJson;
     // 分组只影响展示，逻辑字段路径始终指向原始 JSON。
     const MAX_VISIBLE_ARRAY_ITEMS = 100;
     const ARRAY_GROUP_SIZE = 100;
@@ -17,6 +17,7 @@ globalThis.ApiCopyJsonTree = {
       return entries.sort(([a], [b]) => keyCollator.compare(a, b));
     }
 
+    // 对象字段按属性名复制，数组项按行内显示的下标复制。
     function createFieldActions(key, value, longValueEl = null) {
       if (key === null || key === undefined) return null;
 
@@ -64,9 +65,8 @@ globalThis.ApiCopyJsonTree = {
       const copyValueBtn = document.createElement('button');
       copyValueBtn.type = 'button';
       copyValueBtn.className = 'json-copy-btn';
-      const copyIcon = createSvgIcon(['M9 9h10v10H9zM5 15H4V5h10v1']);
-      copyIcon.classList.add('json-copy-icon');
-      copyValueBtn.append(copyIcon);
+      copyValueBtn.dataset.copyField = 'value';
+      copyValueBtn.append(createSvgIcon(['M9 9h10v10H9zM5 15H4V5h10v1']));
       copyValueBtn.title = t('copyFullFieldValue');
       copyValueBtn.setAttribute('aria-label', t('copyFieldValue', String(key)));
 
@@ -75,8 +75,23 @@ globalThis.ApiCopyJsonTree = {
         stopToggle(event);
         copyText(copyableJsonValue(value), copyValueBtn);
       });
-
       actions.append(copyValueBtn);
+
+      const copyPairBtn = document.createElement('button');
+      copyPairBtn.type = 'button';
+      copyPairBtn.className = 'json-copy-btn';
+      copyPairBtn.dataset.copyField = 'pair';
+      copyPairBtn.append(createSvgIcon(['M8 8h12v12H8zM4 16V4h12', 'M14 11v6M11 14h6']));
+      copyPairBtn.title = t('copyFieldNameAndValue');
+      copyPairBtn.setAttribute('aria-label', t('copyFieldPair', String(key)));
+
+      copyPairBtn.addEventListener('pointerdown', stopToggle);
+      copyPairBtn.addEventListener('click', event => {
+        stopToggle(event);
+        copyText(copyableJsonPair(key, value), copyPairBtn);
+      });
+      actions.append(copyPairBtn);
+
       return actions;
     }
 

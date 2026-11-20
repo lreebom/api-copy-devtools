@@ -1,3 +1,21 @@
+# API Copy 0.5.3
+
+更新日期为 2026-11-20。
+
+## 简体中文
+
+- Query、FormData 和 JSON 字段可单独复制值，也可复制 `字段名: 值`。数组项使用原始下标。
+- 「复制路径 + 参数」和「复制精简请求」跟随全局前缀设置，并保留 URL 编码和剩余斜杠。
+- 请求复制格式更紧凑，表单字段逐行输出。改进 multipart 正文、cURL 字段值和窄面板复制按钮的处理。
+
+## English
+
+- Copy a value or a `name: value` pair from Query, FormData, and JSON. Array items use their original indexes.
+- Copy Path + Params and Copy Simplified Request follow the global path prefix setting and preserve URL encoding and remaining slashes.
+- Request copies use a more compact format with one form field per line. Improve multipart body handling, cURL field accuracy, and button visibility in narrow panes.
+
+---
+
 # API Copy 0.5.2
 
 更新日期：2026-11-10。

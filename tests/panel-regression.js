@@ -35,16 +35,22 @@ frame.addEventListener('load', async () => {
     check(params.querySelectorAll('.request-param-title').length===1
       && params.querySelector('.request-param-title').textContent.includes('Query')
       && doc.querySelector('#requestParamsMeta').textContent==='Query 3 项', '只有 Query 时显示实际数量并隐藏缺失 Body 分区');
-    params.querySelectorAll('.request-query-row')[2].querySelector('button').click();
+    params.querySelectorAll('.request-query-row')[2].querySelector('[data-copy-field="value"]').click();
     await Promise.resolve();
     check(copied==='demo', 'Query 逐项复制实际值，不包含字段名或展示文案');
+    params.querySelectorAll('.request-query-row')[2].querySelector('[data-copy-field="pair"]').click();
+    await Promise.resolve();
+    check(copied==='keyword: demo', 'Query 逐项复制字段名和字段值');
     panel.selectRecord(3);
     check(params.querySelectorAll('.request-param-title').length===1
       && params.querySelector('.request-form-data-list')
       && doc.querySelector('#requestParamsMeta').textContent==='FormData 3 项', 'FormData 请求只汇总实际字段数量，隐藏空 Query 分区');
-    params.querySelectorAll('.request-query-row')[2].querySelector('button').click();
+    params.querySelectorAll('.request-query-row')[2].querySelector('[data-copy-field="value"]').click();
     await Promise.resolve();
     check(copied==='需求说明.pdf', '文件字段只复制文件名，不复制文件描述或伪造文件内容');
+    params.querySelectorAll('.request-query-row')[2].querySelector('[data-copy-field="pair"]').click();
+    await Promise.resolve();
+    check(copied==='attachment: 需求说明.pdf', '文件字段支持复制字段名和文件名');
     panel.selectRecord(6);
     check(!params.children.length && doc.querySelector('#requestParamsMeta').textContent==='无请求参数', '无 Query 和 Body 时仅在标题旁显示提示');
     panel.selectRecord(7);
@@ -57,9 +63,26 @@ frame.addEventListener('load', async () => {
     const itemSummaries=[...doc.querySelectorAll('#previewContent details[data-json-path^="/data/items/"] > summary')];
     check(itemSummaries.length===3 && itemSummaries.every(summary=>{
       const key=summary.querySelector('.json-key').getBoundingClientRect();
-      const copy=summary.querySelector('.json-copy-btn').getBoundingClientRect();
-      return key.width>=12 && copy.right<=summary.getBoundingClientRect().right+1;
-    }), '长摘要不会挤压数组序号，复制按钮保留在面板可见范围内');
+      const actions=summary.querySelector('.json-field-actions').getBoundingClientRect();
+      return key.width>=12 && actions.right<=summary.getBoundingClientRect().right+1
+        && summary.querySelectorAll('.json-copy-btn').length===2;
+    }), '长摘要不会挤压数组序号，数组项的两个复制按钮都在可见范围内');
+    const firstItem = itemSummaries[0].parentElement;
+    itemSummaries[0].querySelector('[data-copy-field="pair"]').click();
+    await Promise.resolve();
+    check(!firstItem.open && copied.startsWith('0: {') && JSON.parse(copied.slice(3)).id==='demo-1025',
+      '折叠数组项可复制下标和完整对象并保持折叠');
+    firstItem.open=true;
+    await waitFor(()=>Boolean(doc.querySelector('#previewContent details[data-json-path="/data/items/0/tags"]')));
+    doc.querySelector('#previewContent details[data-json-path="/data/items/0/tags"]').open=true;
+    await waitFor(()=>Boolean(doc.querySelector('#previewContent [data-match-path="/data/items/0/tags/0"]')));
+    const tagPair = doc.querySelector('#previewContent [data-match-path="/data/items/0/tags/0"] [data-copy-field="pair"]');
+    tagPair.click();
+    await Promise.resolve();
+    check(Boolean(doc.querySelector('#previewContent [data-match-path="/data/items/0/id"] [data-copy-field="pair"]'))
+      && Boolean(doc.querySelector('#previewContent details[data-json-path="/data/items/0/tags"] > summary [data-copy-field="pair"]'))
+      && copied==='0: 前端',
+      '对象字段、数组字段和数组标量元素均可按行内名称或下标复制');
     const originalOrder=[...rows()].map(row=>row.dataset.recordId);
     const sortPreview=doc.querySelector('#previewContent').firstElementChild;
     const sortParams=params.firstElementChild;
@@ -109,7 +132,25 @@ frame.addEventListener('load', async () => {
       row.querySelector('.row-copy-path').click();
       await Promise.resolve();
       check(copied === displayedUrl, '行内复制路径与列表显示一致');
+      const expectedWithQuery = '/his/networkConfigSpec/view/cuOwnership?page=1&pageSize=20&keyword=demo';
+      doc.querySelector('#copyPathQueryBtn').click();
+      await Promise.resolve();
+      check(copied === expectedWithQuery, '工具栏复制路径+参数遵循全局前缀截断并保留 Query');
+      row.querySelector('.row-copy-query').click();
+      await Promise.resolve();
+      check(copied === expectedWithQuery, '行内复制路径+参数遵循全局前缀截断并保留 Query');
+      doc.querySelector('#copySimpleBtn').click();
+      await Promise.resolve();
+      check(copied.includes(`GET ${expectedWithQuery}\n`) && !copied.includes('Body:') && copied.includes('Status: 200 OK'),
+        '工具栏复制精简请求遵循全局前缀截断并省略空 Body');
+      row.querySelector('.row-copy-simple').click();
+      await Promise.resolve();
+      check(copied.includes(`GET ${expectedWithQuery}\n`) && !copied.includes('Body:') && copied.includes('Status: 200 OK'),
+        '行内复制精简请求遵循全局前缀截断并省略空 Body');
     }
+    check(panel.getDisplayUrl('/api/his/his/his/%E6%B5%8B%E8%AF%95?q=%E4%B8%AD%E6%96%87&_t=1#section', true) === '/his/测试?q=中文'
+      && panel.getDisplayUrl('/api/his/his/his/%E6%B5%8B%E8%AF%95?q=%E4%B8%AD%E6%96%87&_t=1#section', false) === '/his/测试',
+      '相对 URL 同样按前缀截断、去除 hash 并展示可读路径和 Query');
     prefixInput.value = savedPrefix;
     prefixInput.dispatchEvent(new panel.Event('input'));
     queryToggle.checked = savedShowQuery;
@@ -126,7 +167,24 @@ frame.addEventListener('load', async () => {
     check(panel.filteredQueryItems({queryString:[{name:'language',value:'C++'}]})[0].value === 'C++', 'HAR 元数据保留实际加号');
     const form = {postData:{mimeType:'application/x-www-form-urlencoded', text:'tag=a&tag=b&language=C%2B%2B&name=%E4%B8%AD%E6%96%87',params:[{name:'incorrect',value:'fallback'}]}};
     check(panel.ApiCopyRequestData.getFormDataItems(form)[2].value === 'C++' && panel.ApiCopyRequestData.getFormDataItems(form).length === 4, '表单优先解析原文并保留同名字段');
-    check(JSON.parse(panel.ApiCopyRequestData.getRequestBody({postData:{params:[{name:'tag',value:'a'},{name:'tag',value:'b'}]}})).length === 2, '复制表单不覆盖同名字段');
+    const paramsOnlyRecord = {url:'https://example.test/form',method:'POST',postData:{params:[{name:'tag',value:'a'},{name:'tag',value:'b'}]}};
+    check(panel.ApiCopyRequestData.getRequestBody(paramsOnlyRecord) === 'tag: a\ntag: b'
+      && panel.ApiCopyRequestData.getFormDataItems(paramsOnlyRecord)?.length === 2
+      && panel.formatPathWithParams(paramsOnlyRecord).includes('FormData:\ntag: a\ntag: b'),
+      '无 mimeType 的 params 表单保持同名字段并与 FormData 标签对齐');
+    panel.selectRecord(3);
+    doc.querySelector('#copyPathQueryBtn').click();
+    await Promise.resolve();
+    check(copied.includes('FormData:\nprojectId: demo-1025\nremark: 项目需求说明\nattachment: 需求说明.pdf · application/pdf · 242.8 KB'),
+      'FormData 复制路径+参数按键值行输出文件元数据');
+    doc.querySelector('#copySimpleBtn').click();
+    await Promise.resolve();
+    check(copied.includes('POST ') && copied.includes('FormData:\nprojectId: demo-1025') && copied.includes('Status: 200 OK'),
+      'FormData 精简请求合并方法路径并输出键值格式');
+    doc.querySelector('#copyFullBtn').click();
+    await Promise.resolve();
+    check(copied.includes('POST ') && copied.includes('FormData:\nprojectId: demo-1025') && !copied.includes('Query Parameters:') && copied.includes('Status: 200 OK'),
+      '完整请求省略空 Query 分区并使用紧凑头部');
 
     panel.clearRequestRecords('回归测试');
     let callback;
@@ -178,6 +236,10 @@ frame.addEventListener('load', async () => {
     search.value='item-9999';search.dispatchEvent(new panel.Event('input'));
     await waitFor(()=>doc.querySelector('#previewMatchCount').textContent === '1 / 1');
     check(doc.querySelector('.json-match-active')?.textContent.includes('item-9999'), '搜索自动跳转到末尾分组的命中项');
+    doc.querySelector('#previewContent details[data-json-path="/data/9999"] > summary [data-copy-field="pair"]').click();
+    await Promise.resolve();
+    check(copied.startsWith('9999: {') && JSON.parse(copied.slice('9999: '.length)).id===9999,
+      '分组数组按元素的原始下标复制键值');
     check(doc.querySelector('#previewContent').querySelectorAll('*').length < 10000, '一万条数组单命中时保持惰性分组，不渲染全部元素');
     search.value='name';search.dispatchEvent(new panel.Event('input'));
     await waitFor(()=>doc.querySelector('#previewMatchCount').textContent === '1 / 10000');
@@ -342,9 +404,12 @@ frame.addEventListener('load', async () => {
     doc.dispatchEvent(new panel.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
     check(overlay.hidden && doc.activeElement===doc.querySelector('#paramFilterBtn'), 'Esc 关闭设置并返回触发按钮');
     const collapsedBody=doc.querySelector('#requestParamsContent details[data-json-path="/nested"]');
-    collapsedBody.querySelector('.json-copy-btn').click();
+    collapsedBody.querySelector('.json-copy-btn[data-copy-field="value"]').click();
     await Promise.resolve();
     check(!collapsedBody.open && JSON.parse(copied).name==='body', '摘要中的复制按钮复制完整对象，不触发展开');
+    collapsedBody.querySelector('.json-copy-btn[data-copy-field="pair"]').click();
+    await Promise.resolve();
+    check(!collapsedBody.open && copied==='nested: {\n  "name": "body"\n}', '摘要中的键值复制按钮复制字段名和完整对象，不触发展开');
     doc.querySelector('#copyCurlBtn').click();
     await Promise.resolve();
     check(copied.includes('curl --globoff') && copied.includes('https://example.test/business'), 'cURL 按钮复制所选请求');
@@ -371,6 +436,10 @@ frame.addEventListener('load', async () => {
     const bodyValue=bodyCopy.closest('.json-line').querySelector('.json-value');
     check(Math.abs(bodyCopy.getBoundingClientRect().left-bodyValue.getBoundingClientRect().right-4)<1,
       '请求 Body 的复制按钮同样紧跟字段值');
+    const bodyPairCopy=doc.querySelector('#requestParamsContent .request-param-json .json-copy-btn[data-copy-field="pair"]');
+    bodyPairCopy.click();
+    await Promise.resolve();
+    check(copied==='id: 2090730954778415427', 'JSON 字段键值复制按钮保留字段名与无损数字');
     check(Math.round(rows()[0].getBoundingClientRect().height)===26 && panel.getComputedStyle(rows()[0].querySelector('.method')).fontSize==='10px'
       && panel.getComputedStyle(preview).fontSize==='11px' && panel.getComputedStyle(preview.querySelector('.json-summary')).lineHeight==='17px', '实际渲染符合紧凑字号、列表行高与 JSON 行距');
     const fullCopy=doc.querySelector('#copyFullBtn');
@@ -405,21 +474,65 @@ frame.addEventListener('load', async () => {
     };
     await addParameterRequest(null,'https://example.test/query?tag=a&tag=b&name=%E4%B8%AD%E6%96%87&empty=&literal=%2520');
     const queryValues=[];
-    for (const button of params.querySelectorAll('button')) {
+    for (const button of params.querySelectorAll('button[data-copy-field="value"]')) {
       button.click(); await Promise.resolve(); queryValues.push(copied);
     }
     check(JSON.stringify(queryValues)===JSON.stringify(['a','b','中文','','%20']),
       'Query 复制保留重复字段、中文、空值和只解码一次的百分号');
+    const queryPairs=[];
+    for (const button of params.querySelectorAll('button[data-copy-field="pair"]')) {
+      button.click(); await Promise.resolve(); queryPairs.push(copied);
+    }
+    check(JSON.stringify(queryPairs)===JSON.stringify(['tag: a','tag: b','name: 中文','empty: ','literal: %20']),
+      'Query 键值复制保留字段名、重复字段、中文、空值和只解码一次的百分号');
+
+    // 实际复制入口要保留可重新解析的 URL，以及路径后缀中的斜杠。
+    const encodedQuery = 'q=a%26b%3Dc%23d&language=C%2B%2B&literal=%2520';
+    const encodedRequestPath = '/gateway/service/v1/demo//%E6%B5%8B%E8%AF%95/?' + encodedQuery + '&_t=1#section';
+    const copiedPath = '/demo//%E6%B5%8B%E8%AF%95/?' + encodedQuery;
+    prefixInput.value = '3';
+    prefixInput.dispatchEvent(new panel.Event('input'));
+    await addParameterRequest(null, 'https://example.test' + encodedRequestPath);
+    const encodedRow = rows()[rows().length - 1];
+    for (const button of [doc.querySelector('#copyPathQueryBtn'), encodedRow.querySelector('.row-copy-query')]) {
+      button.click();
+      await Promise.resolve();
+      check(copied === copiedPath, '路径+参数在截断前缀和过滤 Query 后保留原编码及斜杠');
+    }
+    for (const button of [doc.querySelector('#copySimpleBtn'), encodedRow.querySelector('.row-copy-simple')]) {
+      button.click();
+      await Promise.resolve();
+      check(copied.split('\n')[1] === 'POST ' + copiedPath, '精简请求保留原编码及斜杠');
+    }
+    check(panel.formatPathWithParams({url: encodedRequestPath}) === copiedPath, '相对 URL 复制保留编码及斜杠');
+    prefixInput.value = savedPrefix;
+    prefixInput.dispatchEvent(new panel.Event('input'));
+
+    const multipartText = '--demo\r\nContent-Disposition: form-data; name="note"\r\n\r\nhello--demo-world\r\n--demo--\r\n';
+    await addParameterRequest({mimeType:'multipart/form-data; boundary=demo',text:multipartText});
+    for (const selector of ['#copyPathQueryBtn', '#copySimpleBtn', '#copyFullBtn']) {
+      doc.querySelector(selector).click();
+      await Promise.resolve();
+      check(copied.includes('FormData:\nnote: hello--demo-world'), '各复制入口保留 multipart 字段内的 boundary 文本');
+    }
+
     await addParameterRequest({mimeType:'application/x-www-form-urlencoded',text:'tag=a&tag=b&name=%E4%B8%AD%E6%96%87&empty=&language=C%2B%2B'});
     const formValues=[];
-    for (const button of params.querySelectorAll('button')) {
+    for (const button of params.querySelectorAll('button[data-copy-field="value"]')) {
       button.click(); await Promise.resolve(); formValues.push(copied);
     }
     check(JSON.stringify(formValues)===JSON.stringify(['a','b','中文','','C++']),
       '表单复制保留重复字段、中文、空值和实际加号');
-    const paramButton=params.querySelector('button');
-    check(Math.round(paramButton.getBoundingClientRect().width)===20 && Math.round(paramButton.querySelector('svg').getBoundingClientRect().width)===12,
-      '参数列表沿用 JSON 的 20px 宽按钮和 12px 图标');
+    const formPairs=[];
+    for (const button of params.querySelectorAll('button[data-copy-field="pair"]')) {
+      button.click(); await Promise.resolve(); formPairs.push(copied);
+    }
+    check(JSON.stringify(formPairs)===JSON.stringify(['tag: a','tag: b','name: 中文','empty: ','language: C++']),
+      '表单键值复制保留字段名、重复字段、中文、空值和实际加号');
+    const paramButtons=[...params.querySelectorAll('.request-query-row:first-child button')];
+    check(paramButtons.length===2 && paramButtons.every(button=>Math.round(button.getBoundingClientRect().width)===20
+      && Math.round(button.querySelector('svg').getBoundingClientRect().width)===12),
+      '参数列表两个复制按钮均沿用 JSON 的 20px 宽按钮和 12px 图标');
     const explicitBodies=['{}','[]','0','false','null','""'];
     for (const text of explicitBodies) {
       await addParameterRequest({mimeType:'application/json',text});
@@ -429,8 +542,23 @@ frame.addEventListener('load', async () => {
     }
     await addParameterRequest({mimeType:'application/x-www-form-urlencoded',text:''});
     check(!params.children.length && doc.querySelector('#requestParamsMeta').textContent==='无请求参数', '空表单不留下空分区');
-    await addParameterRequest({mimeType:'application/x-www-form-urlencoded',text:'tag=a&tag=b'},'https://example.test/counts?q=demo');
+    await addParameterRequest({mimeType:'application/x-www-form-urlencoded',text:'tag=a&tag=b'},'https://example.test/counts?q=abc');
     check(doc.querySelector('#requestParamsMeta').textContent==='Query 1 项 · FormData 2 项', '混合参数汇总保留重复表单字段计数');
+    // 在列表和参数左右分栏的窄面板中，核对 Query 与 FormData 按钮的可见区域。
+    frame.style.width='320px';
+    panel.setLayoutMode('auto', false);
+    await new Promise(resolve=>panel.requestAnimationFrame(()=>panel.requestAnimationFrame(resolve)));
+    const narrowLists = [...params.querySelectorAll('.request-query-list')];
+    check(narrowLists.length === 2 && narrowLists.every(list => {
+      const bounds = list.getBoundingClientRect();
+      const buttons = [...list.querySelectorAll('.json-copy-btn')];
+      return buttons.length === list.querySelectorAll('.request-query-row').length * 2 && buttons.every(button => {
+        const rect = button.getBoundingClientRect();
+        return rect.width === 20 && rect.left >= bounds.left && rect.right <= bounds.right;
+      });
+    }), '320px 下 Query 和 FormData 的两个复制按钮都在列表内');
+    frame.style.width='1200px';
+    await new Promise(resolve=>panel.requestAnimationFrame(resolve));
     // 重置必须清除持久化尺寸，恢复比例布局，同时保留另一方向的手动尺寸。
     for (const mode of ['horizontal','vertical']) {
       panel.setLayoutMode(mode);

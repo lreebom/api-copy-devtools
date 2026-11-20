@@ -111,6 +111,17 @@ test('cURL 的 URL 编码表单和重复字段保持完整，HEAD 使用 --head'
   assert(curlArgs({method:'HEAD',url:'https://example.test/'}).includes('--head'));
 });
 
+test('仅有 HAR params 时，表单和 cURL 都保留字面百分号', () => {
+  const request = {
+    method: 'POST',
+    url: 'https://example.test/',
+    postData: { params: [{ name: 'note%2F', value: '%2F' }, { name: 'note%2F', value: 'C++' }] },
+  };
+  assert.equal(data.getRequestBody(request), 'note%2F: %2F\nnote%2F: C++');
+  const body = option(curlArgs(request), '--data-raw');
+  assert.deepEqual([...new URLSearchParams(body)], [['note%2F', '%2F'], ['note%2F', 'C++']]);
+});
+
 test('cURL multipart 文本不读取本地文件，文件使用可替换路径且不复用旧 boundary', () => {
   const request = {method:'POST',url:'https://example.test/upload',requestHeaders:[{name:'Content-Type',value:'multipart/form-data; boundary=old'}],
     postData:{mimeType:'multipart/form-data; boundary=old',params:[
@@ -129,6 +140,89 @@ test('cURL multipart 文本不读取本地文件，文件使用可替换路径�
   const rawForm = {method:'POST',url:request.url,postData:{mimeType:'multipart/form-data; boundary=sample',params:[],
     text:'--sample\r\nContent-Disposition: form-data; name="title"\r\n\r\n中文+文本\r\n--sample--\r\n'}};
   assert.equal(option(curlArgs(rawForm),'--form-string'),'title=中文+文本');
+});
+
+test('multipart 仅在完整分隔行切分，保留字段内的 boundary 和换行', () => {
+  const value = 'hello--demo.boundary+1-world\r\n--demo.boundary+1suffix\r\n';
+  const text = [
+    'preamble',
+    '--demo.boundary+1',
+    'Content-Disposition: form-data; name="note"',
+    '',
+    value,
+    '--demo.boundary+1',
+    'Content-Disposition: form-data; name="note"',
+    '',
+    '',
+    '--demo.boundary+1--',
+    'epilogue',
+  ].join('\r\n');
+  const request = {
+    method: 'POST',
+    url: 'https://example.test/',
+    postData: { mimeType: 'multipart/form-data; boundary = "demo.boundary+1"', text },
+  };
+  assert.equal(data.getRequestBody(request), 'note: ' + value + '\nnote: ');
+  const args = curlArgs(request);
+  assert(args.includes('note=' + value));
+  assert(args.includes('note='));
+});
+
+test('multipart 缺少 boundary 或结束分隔线时，复制保留原始正文', () => {
+  const text = '--demo\r\nContent-Disposition: form-data; name="note"\r\n\r\nhello';
+  for (const mimeType of ['multipart/form-data', 'multipart/form-data; boundary=demo']) {
+    const request = { method: 'POST', url: 'https://example.test/', postData: { mimeType, text } };
+    assert.equal(data.getFormDataItems(request), null);
+    assert.equal(data.getRequestBody(request), text);
+    const args = curlArgs(request);
+    assert(args.includes('Content-Type: ' + mimeType));
+    assert.equal(option(args, '--data-raw'), text);
+  }
+});
+
+test('getRequestBody 对表单输出解码键值与文件元数据，并保留无损 JSON 精度', () => {
+  const urlEncoded = {
+    postData: {
+      mimeType: 'application/x-www-form-urlencoded',
+      text: 'tag=a&tag=b&name=%E4%B8%AD%E6%96%87&literal=%2520',
+      params: [{ name: 'fallback', value: 'ignored' }],
+    },
+  };
+  assert.equal(data.getRequestBody(urlEncoded), 'tag: a\ntag: b\nname: 中文\nliteral: %20');
+
+  const multipart = {
+    postData: {
+      mimeType: 'multipart/form-data; boundary=x',
+      params: [
+        { name: 'projectId', value: 'demo-1025' },
+        { name: 'attachment', fileName: '需求说明.pdf', contentType: 'application/pdf', fileSize: 248576 },
+      ],
+    },
+  };
+  assert.equal(data.getRequestBody(multipart), 'projectId: demo-1025\nattachment: 需求说明.pdf · application/pdf · 242.8 KB');
+  assert.equal(data.getRequestBody({ postData: { mimeType: 'multipart/form-data; boundary=x', params: [] } }), '');
+
+  const paramsOnly = {
+    postData: { params: [{ name: 'tag', value: 'a' }, { name: 'tag', value: 'b' }] },
+  };
+  assert.equal(data.getFormDataItems(paramsOnly)?.length, 2);
+  assert.equal(data.getRequestBody(paramsOnly), 'tag: a\ntag: b');
+
+  const losslessJson = {
+    postData: { mimeType: 'application/json', text: '{"id":2090730954778415427}' },
+  };
+  assert.equal(data.getRequestBody(losslessJson), '{\n  "id": 2090730954778415427\n}');
+});
+
+test('copyableJsonPair 按字段名: 字段值格式输出，保持无损数字和对象缩进', () => {
+  const { copyableJsonPair } = context.ApiCopyJson;
+  const parsed = json('{"functionId":1123,"bigId":2090730954778415427,"name":"demo","ok":true,"empty":null,"nested":{"a":1}}');
+  assert.equal(copyableJsonPair('functionId', parsed.functionId), 'functionId: 1123');
+  assert.equal(copyableJsonPair('bigId', parsed.bigId), 'bigId: 2090730954778415427');
+  assert.equal(copyableJsonPair('name', parsed.name), 'name: demo');
+  assert.equal(copyableJsonPair('ok', parsed.ok), 'ok: true');
+  assert.equal(copyableJsonPair('empty', parsed.empty), 'empty: null');
+  assert.equal(copyableJsonPair('nested', parsed.nested), 'nested: {\n  "a": 1\n}');
 });
 
 test.after(() => fs.rmSync(temporary,{recursive:true,force:true}));

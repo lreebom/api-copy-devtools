@@ -159,7 +159,7 @@ button.compact { height: 24px; padding: 0 6px; font-size: inherit; }
 .request-params-pane {
   min-height: 120px; flex: 1 1 auto;
   display: flex; flex-direction: column; overflow: hidden;
-  background: Canvas;
+  background: Canvas; container-type: inline-size;
 }
 .request-params-splitter {
   position: relative; width: 100%; height: 7px; flex: 0 0 7px;
@@ -212,6 +212,13 @@ button.compact { height: 24px; padding: 0 6px; font-size: inherit; }
 .request-query-value { display: flex; align-items: flex-start; color: #188038; }
 .request-param-value-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .request-query-row:hover .json-field-actions { opacity: 1; pointer-events: auto; }
+/* 参数面板过窄时分行显示字段名和值，复制按钮可在值下方换行。 */
+@container (max-width: 150px) {
+  .request-query-row { grid-template-columns: minmax(0, 1fr); }
+  .request-query-key { border-right: 0; }
+  .request-query-value { flex-wrap: wrap; column-gap: 4px; }
+  .request-query-value .json-field-actions { margin-left: 0; }
+}
 .request-params-content:focus, .preview-content:focus { outline: none; }
 .request-params-content:focus-visible, .preview-content:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
 

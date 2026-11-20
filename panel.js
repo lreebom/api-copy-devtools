@@ -62,7 +62,7 @@ const state = {
   ignoredQueryParams: loadIgnoredQueryParams(),
   // 埋点、统计等非业务请求按 URL 路径排除。
   ignoredUrlPaths: loadIgnoredUrlPaths(),
-  // 请求列表隐藏统一网关前缀，复制时仍使用真实路径。
+  // 请求列表与复制共用全局路径前缀截断配置。
   pathPrefixSegments: loadPathPrefixSegments(),
   // 请求列表默认隐藏 Query，参数区仍保留完整参数。
   showUrlQuery: loadShowUrlQuery(),
@@ -282,38 +282,37 @@ function formatRecord(record) {
   const requestBody = getRequestBody(record);
   const responseBody = tryPretty(record.responseBody, record.mimeType);
   const queryItems = filteredQueryItems(record);
-  const hasRepeatedNames = new Set(queryItems.map(item => item.name)).size !== queryItems.length;
-  const query = hasRepeatedNames ? queryItems : Object.fromEntries(queryItems.map(item => [item.name, item.value ?? '']));
-
-  return [
+  const bodyLabel = getFormDataItems(record) !== null ? 'FormData:' : 'Request Body:';
+  const lines = [
     '================ REQUEST ================',
-    '',
-    'URL:',
-    filterUrlQuery(record.url),
-    '',
-    'Method:',
-    record.method,
-    '',
-    'Query Parameters:',
-    Object.keys(query).length ? JSON.stringify(query, null, 2) : t('none'),
-    '',
-    'Request Headers:',
-    JSON.stringify(requestHeaders, null, 2),
-    '',
-    'Request Body:',
-    requestBody || t('none'),
+    `${record.method} ${filterUrlQuery(record.url)}`,
+  ];
+
+  if (queryItems.length) {
+    const hasRepeatedNames = new Set(queryItems.map(item => item.name)).size !== queryItems.length;
+    const query = hasRepeatedNames ? queryItems : Object.fromEntries(queryItems.map(item => [item.name, item.value ?? '']));
+    lines.push('', 'Query Parameters:', JSON.stringify(query, null, 2));
+  }
+
+  lines.push('', 'Request Headers:', JSON.stringify(requestHeaders, null, 2));
+
+  if (requestBody) {
+    lines.push('', bodyLabel, requestBody);
+  }
+
+  lines.push(
     '',
     '================ RESPONSE ===============',
-    '',
-    'Status:',
-    `${record.status}${record.statusText ? ` ${record.statusText}` : ''}`,
+    `Status: ${record.status}${record.statusText ? ` ${record.statusText}` : ''}`,
     '',
     'Response Headers:',
     JSON.stringify(responseHeaders, null, 2),
     '',
     'Response:',
-    responseBody || t('none'),
-  ].join('\n');
+    responseBody || t('emptyResponse'),
+  );
+
+  return lines.join('\n');
 }
 
 function normalizeIgnoredParamName(name) {
@@ -424,62 +423,15 @@ function filteredQueryItems(record) {
   return items.filter(item => !isIgnoredQueryParam(item.name));
 }
 
-function getSimpleUrl(rawUrl) {
-  const filteredUrl = filterUrlQuery(rawUrl);
-  try {
-    const url = new URL(filteredUrl);
-    let path = url.pathname || '/';
-
-    // 常见后端基础路径 /api 不需要带给 AI，只保留实际接口路径。
-    if (path === '/api') {
-      path = '/';
-    } else if (path.startsWith('/api/')) {
-      path = path.slice(4);
-    }
-
-    return `${path}${url.search || ''}`;
-  } catch {
-    // 相对 URL 也兼容处理。
-    const value = String(filteredUrl || '');
-    return value.startsWith('/api/') ? value.slice(4) : value;
-  }
-}
-
-function getSimplePath(rawUrl, includeQuery = false) {
-  const filteredUrl = filterUrlQuery(rawUrl);
-  try {
-    const url = new URL(filteredUrl);
-    let path = url.pathname || '/';
-
-    if (path === '/api') {
-      path = '/';
-    } else if (path.startsWith('/api/')) {
-      path = path.slice(4);
-    }
-
-    return includeQuery ? `${path}${url.search || ''}` : path;
-  } catch {
-    const value = String(filteredUrl || '');
-    const [pathname, query = ''] = value.split('?');
-    let path = pathname;
-    if (path === '/api') path = '/';
-    else if (path.startsWith('/api/')) path = path.slice(4);
-    return includeQuery && query ? `${path}?${query}` : path;
-  }
-}
-
 function formatPathWithParams(record) {
   if (!record) return '';
-  const path = getSimplePath(record.url, true);
+  const path = getCopyPathWithQuery(record.url);
   const body = getRequestBody(record);
 
   if (!body) return path;
 
-  const method = String(record.method || '').toUpperCase();
-  const bodyMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-  if (!bodyMethods.has(method)) return path;
-
-  return [path, '', 'Body:', body].join('\n');
+  const label = getFormDataItems(record) !== null ? 'FormData:' : 'Body:';
+  return [path, '', label, body].join('\n');
 }
 
 function formatRecordSimple(record) {
@@ -487,52 +439,58 @@ function formatRecordSimple(record) {
 
   const requestBody = getRequestBody(record);
   const responseBody = tryPretty(record.responseBody, record.mimeType);
+  const bodyLabel = getFormDataItems(record) !== null ? 'FormData:' : 'Body:';
+  const requestLines = [
+    '================ REQUEST ================',
+    `${record.method} ${getCopyPathWithQuery(record.url)}`,
+  ];
+  if (requestBody) requestLines.push('', bodyLabel, requestBody);
 
   return [
-    '================ REQUEST ================',
-    '',
-    'URL:',
-    getSimpleUrl(record.url),
-    '',
-    'Method:',
-    record.method,
-    '',
-    'Request Body:',
-    requestBody || t('none'),
+    ...requestLines,
     '',
     '================ RESPONSE ===============',
+    `Status: ${record.status}${record.statusText ? ` ${record.statusText}` : ''}`,
     '',
-    'Status:',
-    `${record.status}${record.statusText ? ` ${record.statusText}` : ''}`,
-    '',
-    'Response:',
-    responseBody || t('none'),
+    responseBody || t('emptyResponse'),
   ].join('\n');
 }
 
-function getDisplayUrl(rawUrl, includeQuery = state.showUrlQuery) {
+// 从过滤后的 URL 提取路径和 Query，兼容相对 URL。
+function getRequestUrlParts(rawUrl) {
   const filteredUrl = filterUrlQuery(rawUrl);
   try {
     const url = new URL(filteredUrl);
-    return `${trimDisplayPath(decodeUrlPath(url.pathname || '/'))}${includeQuery ? formatReadableSearch(url.search) : ''}`;
+    return { pathname: url.pathname, search: url.search };
   } catch {
-    const value = String(filteredUrl || '');
-    const queryIndex = value.indexOf('?');
-    const hashIndex = value.indexOf('#');
-    const suffixIndex = [queryIndex, hashIndex].filter(index => index >= 0).sort((a, b) => a - b)[0] ?? -1;
-    const pathname = suffixIndex >= 0 ? value.slice(0, suffixIndex) : value;
-    const suffix = includeQuery && suffixIndex >= 0 ? value.slice(suffixIndex) : hashIndex >= 0 ? value.slice(hashIndex) : '';
-    return `${trimDisplayPath(pathname)}${suffix}`;
+    const hashIndex = filteredUrl.indexOf('#');
+    const withoutHash = hashIndex >= 0 ? filteredUrl.slice(0, hashIndex) : filteredUrl;
+    const queryIndex = withoutHash.indexOf('?');
+    const pathname = queryIndex >= 0 ? withoutHash.slice(0, queryIndex) : withoutHash;
+    const search = queryIndex >= 0 ? withoutHash.slice(queryIndex) : '';
+    return { pathname, search };
   }
 }
 
-function trimDisplayPath(pathname) {
-  const segments = String(pathname || '').split('/').filter(Boolean);
-  const count = state.pathPrefixSegments;
-  if (!count || !segments.length) return pathname || '/';
-  // 从第一段开始截断，短路径至少保留最后一段接口名。
-  const removeCount = Math.min(count, segments.length - 1);
-  return `/${segments.slice(removeCount).join('/')}`;
+function getDisplayUrl(rawUrl, includeQuery = state.showUrlQuery) {
+  const { pathname, search } = getRequestUrlParts(rawUrl);
+  return `${trimPathPrefix(decodeUrlPath(pathname))}${includeQuery ? formatReadableSearch(search) : ''}`;
+}
+
+// 可粘贴使用的请求路径保留 Query 与路径的百分号编码。
+function getCopyPathWithQuery(rawUrl) {
+  const { pathname, search } = getRequestUrlParts(rawUrl);
+  return trimPathPrefix(pathname) + search;
+}
+
+function trimPathPrefix(pathname) {
+  const path = pathname || '/';
+  if (!state.pathPrefixSegments) return path;
+
+  // 按非空段计数，至少保留最后一段，并保留剩余路径中的斜杠。
+  const segments = [...path.matchAll(/[^/]+/g)];
+  const removeCount = Math.min(state.pathPrefixSegments, segments.length - 1);
+  return removeCount > 0 ? `/${path.slice(segments[removeCount].index)}` : path;
 }
 
 function filteredRecords() {
@@ -880,12 +838,23 @@ function appendParameterList(title, items, isFormData = false) {
     const copyButton = document.createElement('button');
     copyButton.type = 'button';
     copyButton.className = 'json-copy-btn';
+    copyButton.dataset.copyField = 'value';
     copyButton.title = item.isFile ? t('copyFileName') : t('copyFullFieldValue');
     copyButton.setAttribute('aria-label', item.isFile
       ? `${t('copyFileName')} (${item.name})` : t('copyFieldValue', item.name));
     copyButton.appendChild(createSvgIcon(['M9 9h10v10H9zM5 15H4V5h10v1']));
     copyButton.addEventListener('click', () => copyText(String(copyValue), copyButton));
-    actions.appendChild(copyButton);
+
+    const copyPairButton = document.createElement('button');
+    copyPairButton.type = 'button';
+    copyPairButton.className = 'json-copy-btn';
+    copyPairButton.dataset.copyField = 'pair';
+    copyPairButton.title = t('copyFieldNameAndValue');
+    copyPairButton.setAttribute('aria-label', t('copyFieldPair', item.name || ''));
+    copyPairButton.appendChild(createSvgIcon(['M8 8h12v12H8zM4 16V4h12', 'M14 11v6M11 14h6']));
+    copyPairButton.addEventListener('click', () => copyText(`${item.name || ''}: ${copyValue}`, copyPairButton));
+
+    actions.append(copyButton, copyPairButton);
     value.append(text, actions);
     row.append(key, value);
     list.appendChild(row);

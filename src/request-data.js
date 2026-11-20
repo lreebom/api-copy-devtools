@@ -46,15 +46,32 @@ globalThis.ApiCopyRequestData = (() => {
     return record.parsedResponseJson;
   }
 
+  // 将表单项格式化为与面板展示一致的键值行，文件项附带类型与大小信息。
+  function formatFormDataItems(items = []) {
+    return items.map(item => {
+      const valueText = item.isFile
+        ? [item.fileName, item.contentType, formatFileSize(item.fileSize)].filter(Boolean).join(' · ')
+        : String(item.value ?? '');
+      return `${item.name}: ${valueText}`;
+    }).join('\n');
+  }
+
   function getRequestBody(record) {
-    const postData = record.postData;
+    const postData = record?.postData;
     if (!postData) return '';
+
+    const formItems = getFormDataItems(record);
+    if (formItems !== null) return formatFormDataItems(formItems);
 
     if (postData.text) return tryPretty(postData.text, postData.mimeType || '');
 
     if (Array.isArray(postData.params)) {
       // 字段列表保留同名参数、原始顺序和文件元数据，避免转为对象后相互覆盖。
-      return LosslessJSON.stringify(postData.params, null, 2);
+      return formatFormDataItems(postData.params.map(param => createFormDataItem({
+        ...param,
+        name: decodeUrlComponent(param.name),
+        value: decodeUrlComponent(param.value),
+      })));
     }
     return '';
   }
@@ -87,36 +104,51 @@ globalThis.ApiCopyRequestData = (() => {
     return [...new URLSearchParams(text)].map(([name, value]) => createFormDataItem({ name, value }));
   }
 
+  // 只识别完整的 multipart 分隔行，解析不完整时返回 null 以保留原始正文。
   function parseMultipartFormData(text, mimeType) {
-    const boundaryMatch = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(mimeType);
+    const boundaryMatch = /(?:^|;)\s*boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i.exec(mimeType);
     const boundary = boundaryMatch?.[1] || boundaryMatch?.[2];
-    if (!boundary) return [];
+    if (!boundary) return null;
 
-    const parts = text.split(`--${boundary}`);
+    const escapedBoundary = boundary.replace(/[.*+?^$\{\}()|[\]\\]/g, '\\$&');
+    const delimiter = new RegExp(`(?:^|\\r?\\n)--${escapedBoundary}(--)?[ \\t]*(?=\\r?\\n|$)`, 'g');
+    const delimiters = [...text.matchAll(delimiter)];
     const fields = [];
-    for (const part of parts) {
-      const normalized = part.replace(/^\r?\n|\r?\n--$/g, '');
-      const separatorIndex = normalized.search(/\r?\n\r?\n/);
-      if (separatorIndex < 0) continue;
+    for (let index = 0; index < delimiters.length; index++) {
+      const current = delimiters[index];
+      if (current[1]) return fields;
 
-      const headers = normalized.slice(0, separatorIndex);
-      const content = normalized.slice(separatorIndex).replace(/^\r?\n\r?\n/, '').replace(/\r?\n$/, '');
+      const next = delimiters[index + 1];
+      if (!next) return null;
+
+      const part = text.slice(current.index + current[0].length, next.index).replace(/^\r?\n/, '');
+      const separator = /\r?\n\r?\n/.exec(part);
+      if (!separator) return null;
+
+      const headers = part.slice(0, separator.index);
+      const content = part.slice(separator.index + separator[0].length);
       const disposition = /content-disposition:\s*form-data;([^\r\n]+)/i.exec(headers)?.[1] || '';
-      const name = /name="([^"]*)"/i.exec(disposition)?.[1] || '';
-      if (!name) continue;
-      const fileName = /filename="([^"]*)"/i.exec(disposition)?.[1] || '';
+      const name = /(?:^|;)\s*name="([^"]*)"/i.exec(disposition);
+      if (!name) return null;
+      const fileName = /(?:^|;)\s*filename="([^"]*)"/i.exec(disposition)?.[1] || '';
       const contentType = /content-type:\s*([^\r\n]+)/i.exec(headers)?.[1]?.trim() || '';
-      fields.push(createFormDataItem({ name, value: fileName ? '' : content, fileName, contentType }));
+      fields.push(createFormDataItem({ name: name[1], value: fileName ? '' : content, fileName, contentType }));
     }
-    return fields;
+    return null;
   }
 
   function getFormDataItems(record) {
     const postData = record?.postData;
-    if (!postData || !isFormDataMimeType(postData.mimeType || '')) return null;
+    if (!postData) return null;
+    const mimeType = postData.mimeType || '';
+    // 只有 HAR 字段时保留原值，避免在展示或重建 cURL 时误解码字面百分号。
+    if (!mimeType && !postData.text && Array.isArray(postData.params)) {
+      return postData.params.map(createFormDataItem);
+    }
+    if (!isFormDataMimeType(mimeType)) return null;
 
     if (Array.isArray(postData.params) && postData.params.length) {
-      if (postData.text && postData.mimeType.toLowerCase().includes('application/x-www-form-urlencoded')) {
+      if (postData.text && mimeType.toLowerCase().includes('application/x-www-form-urlencoded')) {
         return parseUrlEncodedFormData(postData.text);
       }
       // HAR 字段可能已经解码；加号在这里是实际内容，不能再按表单空格转换。
@@ -127,10 +159,10 @@ globalThis.ApiCopyRequestData = (() => {
 
     const text = postData.text || '';
     if (!text) return [];
-    if (postData.mimeType.toLowerCase().includes('application/x-www-form-urlencoded')) {
+    if (mimeType.toLowerCase().includes('application/x-www-form-urlencoded')) {
       return parseUrlEncodedFormData(text);
     }
-    return parseMultipartFormData(text, postData.mimeType);
+    return parseMultipartFormData(text, mimeType);
   }
 
   function getRequestBodyValue(record) {
@@ -207,7 +239,11 @@ globalThis.ApiCopyRequestData = (() => {
     if (!record) return '';
     const method = String(record.method || 'GET').toUpperCase();
     const postData = record.postData;
-    const multipart = postData?.mimeType?.toLowerCase().includes('multipart/form-data');
+    const multipartItems = postData?.mimeType?.toLowerCase().includes('multipart/form-data')
+      ? getFormDataItems(record)
+      : null;
+    // 仅在取得实际字段后重建 multipart，否则保留原始 Content-Type 和正文。
+    const rebuildMultipart = Boolean(multipartItems?.length);
     const options = ['curl --globoff', method === 'HEAD' ? '--head' : '--request ' + quoteShell(method),
       '--url ' + quoteShell(record.url)];
     // 传输长度、连接信息和 HTTP/2 伪头由 cURL 生成，避免与重新编码后的正文冲突。
@@ -219,19 +255,18 @@ globalThis.ApiCopyRequestData = (() => {
       if (!name || name.startsWith(':') || excludedHeaders.has(lower)) continue;
       if (lower === 'content-type') {
         hasContentType = true;
-        if (multipart) continue;
+        if (rebuildMultipart) continue;
       }
       options.push('--header ' + quoteShell(name + ': ' + (header.value ?? '')));
     }
-    if (postData?.mimeType && !hasContentType && !multipart) {
+    if (postData?.mimeType && !hasContentType && !rebuildMultipart) {
       options.push('--header ' + quoteShell('Content-Type: ' + postData.mimeType));
     }
 
     let hasFiles = false;
-    if (multipart) {
+    if (rebuildMultipart) {
       // 文本字段用 --form-string，避免以 @ 或 < 开头的实际内容被当作文件读取。
-      const items = getFormDataItems(record) || [];
-      for (const item of items) {
+      for (const item of multipartItems) {
         if (item.isFile) {
           hasFiles = true;
           const quotedFile = value => '"' + String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"') + '"';

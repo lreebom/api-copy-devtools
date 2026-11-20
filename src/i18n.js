@@ -73,6 +73,8 @@ globalThis.ApiCopyI18n = (() => {
     copy: '复制',
     copyFullFieldValue: '复制完整字段值',
     copyFieldValue: '复制字段 $1 的值',
+    copyFieldNameAndValue: '复制字段名和值',
+    copyFieldPair: '复制字段 $1 的名称和值',
     copyFileName: '复制文件名',
     jsonPreview: 'JSON 预览',
     doubleClickToggle: '双击展开 / 收起',

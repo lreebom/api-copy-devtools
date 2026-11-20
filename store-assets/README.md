@@ -1,8 +1,8 @@
-# Chrome / Edge 商店 0.5.0 发布材料
+# Chrome / Edge 商店发布材料
 
-安装包：`../dist/api-copy-devtools-v0.5.0.zip`，由 `scripts/package.sh` 生成。商店材料不进入扩展安装包。
+当前安装包为 `../dist/api-copy-devtools-v0.5.3.zip`，由 `scripts/package.sh` 生成。商店材料不进入扩展安装包。
 
-- `RELEASE_NOTES.md`：0.5.0 中英文更新说明，可复制到商店更新说明栏。
+- `RELEASE_NOTES.md`：中英文更新说明，可复制到商店更新说明栏。
 - `STORE_LISTING.zh-CN.md`：简体中文商品详情。
 - `STORE_LISTING.en.md`：英文商品详情。
 - `PRIVACY_FORM.zh-CN.md`：隐私权规范填写稿。
@@ -11,7 +11,7 @@
 
 ## 历史图片素材
 
-以下图片来自旧版，不代表 0.5.0 最新界面，更新商店截图时需重新截取：
+以下图片保留旧版界面。更新商店截图时请以当前版本为准。
 
 - `screenshot-01-overview-1280x800.png`：原核心界面截图。
 - `screenshot-02-json-preview-1280x800.png`：原 JSON Preview 截图。

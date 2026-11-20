@@ -4,6 +4,14 @@
 
 All notable changes to API Copy are documented here.
 
+## 0.5.3 - 2026-11-20
+
+- Copy a value or a `name: value` pair from Query, FormData, and request or response JSON. Array items use their original indexes, including in grouped arrays.
+- Apply the global path prefix setting to Copy Path + Params and Copy Simplified Request while preserving encoded Query values and remaining slashes.
+- Make request copies more compact with a method-and-URL line, omitted empty parameter sections, and one form field per line.
+- Preserve multipart field text that contains boundary-like strings and fall back to the raw body when parsing fails.
+- Preserve literal percent escapes when building cURL from HAR entries with only `params`. Keep both parameter copy buttons accessible in narrow panes.
+
 ## 0.5.2 - 2026-11-10
 
 - Copy Path follows the request list’s path trimming and Query visibility settings.

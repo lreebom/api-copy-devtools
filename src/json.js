@@ -50,5 +50,10 @@ globalThis.ApiCopyJson = (() => {
     return String(value);
   }
 
-  return { isJsonText, parseJsonValue, parseJsonText, isJsonContainer, valueClass, primitiveText, formatJsonPrimitive, textMatches, copyableJsonValue };
+  // 按“字段名: 值”格式复制单个字段，保持无损数字和对象缩进。
+  function copyableJsonPair(key, value) {
+    return `${String(key)}: ${copyableJsonValue(value)}`;
+  }
+
+  return { isJsonText, parseJsonValue, parseJsonText, isJsonContainer, valueClass, primitiveText, formatJsonPrimitive, textMatches, copyableJsonValue, copyableJsonPair };
 })();

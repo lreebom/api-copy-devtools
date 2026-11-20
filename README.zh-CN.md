@@ -1,6 +1,6 @@
 # API Copy
 
-当前版本：**0.5.2**。
+当前版本：**0.5.3**。
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
@@ -15,9 +15,9 @@ API Copy 是一个面向接口联调和问题排查的 Chrome DevTools 扩展。
 - 界面自动跟随 Chrome 语言，内置简体中文和英文。
 - 快速复制：
   - **复制路径**：按请求列表显示复制路径，跟随路径前缀截断和 Query 显示设置。
-  - **复制路径 + 参数**：包含 Query；有 Body 的请求会同时带 Body。
-  - **复制精简请求**：请求 + 响应，不包含 Header。
-  - **复制完整请求**：请求 + 响应，包含 Header。
+  - **复制路径 + 参数**：按全局设置截断路径前缀，保留 Query 编码。有 Body 时一并复制。
+  - **复制精简请求**：方法与截断后的编码路径合并为一行，并附上 Body、响应状态和响应内容。
+  - **复制完整请求**：包含完整 URL、请求头、响应头和响应内容。精简与完整格式均省略空 Body 区块。
   - **复制 cURL**：按原始 URL、请求头和 Body 生成 POSIX Shell 命令，不受展示截断与 Query 过滤影响；文件上传需替换本地文件占位路径。
   - **复制 Token**：复制 Authorization / Token Header 的完整值，例如 `Bearer eyJ...`。
 - 请求列表 Hover 时显示 3 个高频快捷复制按钮。
@@ -30,7 +30,7 @@ API Copy 是一个面向接口联调和问题排查的 Chrome DevTools 扩展。
   - `isSuccess === false`
   - `code` 存在且不为 `0` / `200`
 - 过滤设置：默认移除 Query 参数 `_t`，并排除埋点接口 `/jsfulldatasave-be/savedatasfromjs`；支持自行配置多个参数和接口路径。
-- 请求参数：在请求列表旁展示 URL Query、FormData／URL 编码表单，以及 JSON 或原始文本格式的请求 Body；参数支持逐项复制，文件字段复制文件名。
+- 请求参数：在请求列表旁展示 URL Query、FormData／URL 编码表单，以及 JSON 或原始文本格式的请求 Body。悬停时可复制值或 `字段名: 值`，文件字段以文件名作为复制值。
 - 请求列表展示：支持全局截断路径前缀，并可选择是否展示 URL Query 参数；默认不展示 Query。
 - JSON Preview：
   - 对象字段默认按 A-Z 排序，可切换为原始字段顺序
@@ -41,7 +41,7 @@ API Copy 是一个面向接口联调和问题排查的 Chrome DevTools 扩展。
   - 展开 / 收起对象与数组
   - 默认展开根节点和顶层 `data`；搜索时只展开命中路径
   - 区分字符串、数字、布尔值、null、对象和数组
-  - 一键复制字段值
+  - 悬停时可复制值或 `字段名: 值`。数组项使用原始下标，例如 `0: {…}`
   - 长字符串自动收缩，可通过字段按钮或双击展开 / 收起
 - 支持自动、左右和上下三种面板布局，并分别记住布局模式和拖拽尺寸；双击分隔线恢复主面板 40% / 60%、列表与参数 65% / 35% 的默认比例。
 
@@ -130,7 +130,7 @@ _t,timestamp,nonce
 
 在业务规则中可选择 `isSuccess + code`、`success` 或 `code` 预设，继续修改字段和成功值后保存。`success` 预设只检查 `success = true`，不假定 `errorCode` 的成功值。
 
-Query／FormData 的字段名与参数值始终完整展示并自动换行。请求列表与参数区按设置的比例分配空间，可拖动分隔线调整。
+Query／FormData 的字段名与值支持换行。参数区过窄时两者分行显示，为两个复制按钮留出空间。复制请求时，表单字段逐行输出，并附带可用的文件信息。拖动分隔线可调整请求列表与参数区的比例。
 
 ## 项目结构
 
@@ -179,12 +179,12 @@ api-copy-devtools/
 会生成：
 
 ```text
-dist/api-copy-devtools-v0.5.2.zip
+dist/api-copy-devtools-v0.5.3.zip
 ```
 
 ZIP 根目录直接包含 `manifest.json`，可用于 Chrome Web Store 或 Microsoft Edge Add-ons 上传。安装包包含 `src/`、`vendor/` 和第三方许可证，不包含测试代码、大 JSON 样例、截图及商店材料。
 
-0.5.2 商店更新说明见 [发布说明](./store-assets/RELEASE_NOTES.md)。
+0.5.3 商店更新说明见 [发布说明](./store-assets/RELEASE_NOTES.md)。
 
 ## 隐私
 
