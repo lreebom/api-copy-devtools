@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { execFileSync } = require('node:child_process');
 const os = require('node:os');
 
-const context = { LosslessJSON: require('../vendor/lossless-json.js'), URLSearchParams };
+const context = { LosslessJSON: require('../vendor/lossless-json.js'), URLSearchParams, atob, TextDecoder };
 vm.createContext(context);
 for (const file of ['json', 'request-data', 'request-filters', 'business-rules']) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../src', file + '.js'), 'utf8'), context);
@@ -112,14 +112,18 @@ test('cURL 的 URL 编码表单和重复字段保持完整，HEAD 使用 --head'
 });
 
 test('仅有 HAR params 时，表单和 cURL 都保留字面百分号', () => {
-  const request = {
-    method: 'POST',
-    url: 'https://example.test/',
-    postData: { params: [{ name: 'note%2F', value: '%2F' }, { name: 'note%2F', value: 'C++' }] },
-  };
-  assert.equal(data.getRequestBody(request), 'note%2F: %2F\nnote%2F: C++');
-  const body = option(curlArgs(request), '--data-raw');
-  assert.deepEqual([...new URLSearchParams(body)], [['note%2F', '%2F'], ['note%2F', 'C++']]);
+  const params = [{ name: 'note%2F', value: '%2F' }, { name: 'note%2F', value: 'C++' }];
+  for (const mimeType of [undefined, 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=demo']) {
+    const request = { method: 'POST', url: 'https://example.test/', postData: { mimeType, params } };
+    assert.equal(data.getRequestBody(request), 'note%2F: %2F\nnote%2F: C++');
+    const args = curlArgs(request);
+    if (mimeType?.startsWith('multipart/form-data')) {
+      assert.deepEqual(args.filter((_, index) => args[index - 1] === '--form-string'), ['note%2F=%2F', 'note%2F=C++']);
+    } else {
+      const body = option(args, '--data-raw');
+      assert.deepEqual([...new URLSearchParams(body)], [['note%2F', '%2F'], ['note%2F', 'C++']]);
+    }
+  }
 });
 
 test('cURL multipart 文本不读取本地文件，文件使用可替换路径且不复用旧 boundary', () => {
@@ -223,6 +227,107 @@ test('copyableJsonPair 按字段名: 字段值格式输出，保持无损数字�
   assert.equal(copyableJsonPair('ok', parsed.ok), 'ok: true');
   assert.equal(copyableJsonPair('empty', parsed.empty), 'empty: null');
   assert.equal(copyableJsonPair('nested', parsed.nested), 'nested: {\n  "a": 1\n}');
+});
+
+test('格式化响应复用已解析的 JSON，保留精度和纯文本原样', () => {
+  const body = ' {"id":2090730954778415427} ';
+  const parsed = json(body);
+  const originalJson = context.LosslessJSON;
+  let parseCalls = 0;
+  context.LosslessJSON = {
+    ...originalJson,
+    parse(...args) {
+      parseCalls++;
+      return originalJson.parse(...args);
+    },
+  };
+  try {
+    assert.equal(data.tryPretty(body, 'application/json', parsed), '{\n  "id": 2090730954778415427\n}');
+    assert.equal(data.tryPretty(' null ', 'application/json', null), 'null');
+    assert.equal(data.tryPretty(' false ', 'text/plain', false), ' false ');
+    assert.equal(parseCalls, 0);
+  } finally {
+    context.LosslessJSON = originalJson;
+  }
+});
+
+test('decodeResponseContent 区分可读文本、二进制、空正文与坏 Base64', () => {
+  // 1x1 透明 PNG 的 Base64 数据。
+  const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+  const pngTyped = data.decodeResponseContent(pngBase64, 'base64', 'image/png');
+  assert.equal(pngTyped.state, 'binary');
+  assert.equal(pngTyped.text, '');
+  assert.equal(pngTyped.byteLength, 68);
+
+  // 未标明 MIME 的 PNG 字节流也通过严格 UTF-8 校验归类为二进制，不解码成乱码。
+  const pngUntyped = data.decodeResponseContent(pngBase64, 'base64', '');
+  assert.equal(pngUntyped.state, 'binary');
+  assert.equal(pngUntyped.text, '');
+  assert.equal(pngUntyped.byteLength, 68);
+
+  const utf8JsonBase64 = Buffer.from('{"msg":"中文成功"}', 'utf8').toString('base64');
+  const utf8Decoded = data.decodeResponseContent(utf8JsonBase64, 'base64', 'application/json');
+  assert.equal(utf8Decoded.state, 'ready');
+  assert.equal(utf8Decoded.text, '{"msg":"中文成功"}');
+
+  const svgBase64 = Buffer.from('<svg></svg>', 'utf8').toString('base64');
+  assert.equal(data.decodeResponseContent(svgBase64, 'base64', 'image/svg+xml').state, 'ready');
+
+  assert.equal(data.decodeResponseContent('not-valid-base64!!!', 'base64', 'text/plain').state, 'decode_error');
+  assert.equal(data.decodeResponseContent('', '', 'application/json').state, 'empty');
+  assert.deepEqual({ ...data.decodeResponseContent('[正在读取响应内容…]', '', 'text/plain') }, {
+    state: 'ready', text: '[正在读取响应内容…]', byteLength: Buffer.byteLength('[正在读取响应内容…]', 'utf8'),
+  });
+  const emojiText = '中文😀';
+  const emojiPlain = data.decodeResponseContent(emojiText, '', 'text/plain');
+  const emojiBase64 = data.decodeResponseContent(Buffer.from(emojiText, 'utf8').toString('base64'), 'base64', 'text/plain');
+  assert.equal(emojiPlain.byteLength, 10);
+  assert.equal(emojiBase64.byteLength, 10);
+  assert.equal(data.decodeResponseContent('abc\0def', '', '').state, 'binary');
+});
+
+test('markDuplicateRequests 按方法、过滤 URL 和请求体在时间窗口内识别重复请求', () => {
+  const base = Date.parse('2026-11-23T08:00:00.000Z');
+  const iso = offset => new Date(base + offset).toISOString();
+  const stripT = url => url.replace(/[?&]_t=[^&]+/, '');
+  const list = [
+    { id: 1, method: 'GET', url: 'https://example.test/list?_t=1', startedDateTime: iso(0) },
+    { id: 2, method: 'GET', url: 'https://example.test/list?_t=2', startedDateTime: iso(120) },
+    { id: 3, method: 'GET', url: 'https://example.test/list?_t=3', startedDateTime: iso(500) },
+    { id: 4, method: 'GET', url: 'https://example.test/list?_t=4', startedDateTime: iso(2200) },
+    { id: 5, method: 'POST', url: 'https://example.test/q', startedDateTime: iso(0), postData: { mimeType: 'application/json', text: '{"page":1}' } },
+    { id: 6, method: 'POST', url: 'https://example.test/q', startedDateTime: iso(80), postData: { mimeType: 'application/json', text: '{"page":2}' } },
+    { id: 7, method: 'POST', url: 'https://example.test/q', startedDateTime: iso(150), postData: { mimeType: 'application/json', text: '{"page":1}' } },
+  ];
+  data.markDuplicateRequests(list, { enabled: true, windowMs: 1000, getFilteredUrl: stripT });
+  assert.equal(list[0].duplicateOfId, null);
+  assert.equal(list[0].duplicateIndex, 1);
+  assert.equal(list[0].duplicateTotal, 3);
+  assert.equal(list[1].duplicateOfId, 1);
+  assert.equal(list[1].duplicateGroupId, list[0].duplicateGroupId);
+  assert.equal(list[1].duplicateGapMs, 120);
+  assert.equal(list[1].duplicateIndex, 2);
+  assert.equal(list[1].duplicateTotal, 3);
+  assert.equal(list[2].duplicateOfId, 2);
+  assert.equal(list[2].duplicateIndex, 3);
+  assert.equal(list[2].duplicateTotal, 3);
+  assert.equal(list[3].duplicateTotal, 1);
+  assert.equal(list[4].duplicateIndex, 1);
+  assert.equal(list[4].duplicateTotal, 2);
+  assert.equal(list[5].duplicateTotal, 1);
+  assert.equal(list[6].duplicateOfId, 5);
+  assert.equal(list[6].duplicateGapMs, 150);
+  assert.equal(list[6].duplicateIndex, 2);
+  assert.equal(list[6].duplicateTotal, 2);
+
+  // 快捷筛选支持按重复请求过滤，同组全部请求均命中以便对照查看。
+  assert.equal(filters.matches(list[0], { ...settings, duplicate: true }), true);
+  assert.equal(filters.matches(list[1], { ...settings, duplicate: true }), true);
+  assert.equal(filters.matches(list[3], { ...settings, duplicate: true }), false);
+
+  // 关闭检测时清空全部重复标记。
+  data.markDuplicateRequests(list, { enabled: false, windowMs: 1000, getFilteredUrl: stripT });
+  assert.equal(list.some(item => item.duplicateTotal > 1), false);
 });
 
 test.after(() => fs.rmSync(temporary,{recursive:true,force:true}));

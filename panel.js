@@ -3,22 +3,30 @@ const { t, localizeDocument } = ApiCopyI18n;
 const { parseJsonText } = ApiCopyJson;
 const {
   normalizeResourceType, isFetchXhrType, headersToObject,
-  tryPretty, getResponseJson, getRequestBody, formatFileSize,
-  getFormDataItems, getRequestBodyValue, decodeUrlComponent, decodeUrlPath,
-  formatReadableSearch, getTokenFromRecord, formatCurl,
+  looksLikeJson, decodeResponseContent, tryPretty, getResponseJson,
+  getRequestBody, formatFileSize, getFormDataItems, getRequestBodyValue,
+  decodeUrlComponent, decodeUrlPath, formatReadableSearch, getTokenFromRecord, formatCurl,
+  markDuplicateRequests,
 } = ApiCopyRequestData;
 localizeDocument();
 
 const MAX_RECORDS = 500;
+// 超过 1 MiB 的 JSON 响应不在采集回调中同步解析，改在选中查看时按需解析。
+const SYNC_JSON_PARSE_LIMIT = 1024 * 1024;
+// 响应正文总缓存预算（24 MiB），超限时优先释放最早的非选中记录正文。
+const MAX_RESPONSE_BODY_BYTES = 24 * 1024 * 1024;
 const PREVIEW_SEARCH_DELAY = 180;
 const STACK_BREAKPOINT = 1100;
 const DEFAULT_IGNORED_QUERY_PARAMS = ['_t'];
 const DEFAULT_IGNORED_URL_PATHS = ['/jsfulldatasave-be/savedatasfromjs'];
 const DEFAULT_PATH_PREFIX_SEGMENTS = 3;
+const DEFAULT_DUPLICATE_WINDOW_MS = 1000;
 const IGNORED_PARAMS_STORAGE_KEY = 'apiCopyIgnoredQueryParams';
 const IGNORED_PATHS_STORAGE_KEY = 'apiCopyIgnoredUrlPaths';
 const PATH_PREFIX_SEGMENTS_STORAGE_KEY = 'apiCopyPathPrefixSegments';
 const SHOW_URL_QUERY_STORAGE_KEY = 'apiCopyShowUrlQuery';
+const DUPLICATE_WARNING_STORAGE_KEY = 'apiCopyDuplicateWarningEnabled';
+const DUPLICATE_WINDOW_MS_STORAGE_KEY = 'apiCopyDuplicateWindowMs';
 const LAYOUT_MODE_STORAGE_KEY = 'apiCopyLayoutMode';
 const REQUEST_LIST_SIZE_STORAGE_KEY = 'apiCopyRequestListSize';
 const REQUEST_SORT_STORAGE_KEY = 'apiCopyRequestSortOrder';
@@ -55,8 +63,21 @@ function loadShowUrlQuery() {
   return localStorage.getItem(SHOW_URL_QUERY_STORAGE_KEY) === 'true';
 }
 
+function loadDuplicateWarningEnabled() {
+  return localStorage.getItem(DUPLICATE_WARNING_STORAGE_KEY) !== 'false';
+}
+
+function loadDuplicateWindowMs() {
+  const raw = localStorage.getItem(DUPLICATE_WINDOW_MS_STORAGE_KEY);
+  if (raw === null) return DEFAULT_DUPLICATE_WINDOW_MS;
+  const saved = Number(raw);
+  return Number.isInteger(saved) && saved >= 100 && saved <= 60000 ? saved : DEFAULT_DUPLICATE_WINDOW_MS;
+}
+
 const state = {
   records: [],
+  // 仅按同一事件对象引用防重，避免误杀并发的同地址请求。
+  seenRequests: new WeakSet(),
   selectedId: null,
   nextId: 1,
   ignoredQueryParams: loadIgnoredQueryParams(),
@@ -66,6 +87,9 @@ const state = {
   pathPrefixSegments: loadPathPrefixSegments(),
   // 请求列表默认隐藏 Query，参数区仍保留完整参数。
   showUrlQuery: loadShowUrlQuery(),
+  // 短时间内发出完全相同的请求时，在列表上给出重复警告徽标。
+  duplicateWarningEnabled: loadDuplicateWarningEnabled(),
+  duplicateWindowMs: loadDuplicateWindowMs(),
   // 默认沿用较早请求在前，用户切换后在刷新和重新打开面板时恢复。
   requestSortOrder: localStorage.getItem(REQUEST_SORT_STORAGE_KEY) === 'newest' ? 'newest' : 'oldest',
   // Preview 默认按字母排列字段，切换请求时保留当前排序方式。
@@ -88,6 +112,10 @@ const state = {
   previewSearchTimer: null,
   // 自动模式响应面板宽度，手动模式固定用户选择的布局方向。
   layoutMode: loadLayoutMode(),
+  // 业务规则版本号与异步重判队列，切规则或清空列表时自动作废旧队列。
+  businessRuleRevision: 0,
+  deferredRuleQueue: [],
+  businessRuleReevalTimer: null,
 };
 
 const el = {
@@ -103,6 +131,8 @@ const el = {
   ignoredPathsInput: document.querySelector('#ignoredPathsInput'),
   pathPrefixSegmentsInput: document.querySelector('#pathPrefixSegmentsInput'),
   showUrlQueryInput: document.querySelector('#showUrlQueryInput'),
+  duplicateWarningInput: document.querySelector('#duplicateWarningInput'),
+  duplicateWindowMsInput: document.querySelector('#duplicateWindowMsInput'),
   resetIgnoredParamsBtn: document.querySelector('#resetIgnoredParamsBtn'),
   clearBtn: document.querySelector('#clearBtn'),
   requestList: document.querySelector('#requestList'),
@@ -137,19 +167,75 @@ const panelUi = ApiCopyPanelUi.create({
     el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
     el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
     el.showUrlQueryInput.checked = state.showUrlQuery;
+    el.duplicateWarningInput.checked = state.duplicateWarningEnabled;
+    el.duplicateWindowMsInput.value = String(state.duplicateWindowMs);
+    el.duplicateWindowMsInput.disabled = !state.duplicateWarningEnabled;
   },
 });
+
+// 将未选中的超大 JSON 响应加入后台队列，按单条异步解析判定业务结果，不阻塞采集也不保留解析树。
+function queueDeferredRuleEvaluation(record) {
+  if (!record || state.deferredRuleQueue.includes(record)) return;
+  state.deferredRuleQueue.push(record);
+  scheduleDeferredRuleDrain();
+}
+
+function scheduleDeferredRuleDrain() {
+  if (state.businessRuleReevalTimer !== null || !state.deferredRuleQueue.length) return;
+  const revision = state.businessRuleRevision;
+  state.businessRuleReevalTimer = setTimeout(() => {
+    state.businessRuleReevalTimer = null;
+    if (revision !== state.businessRuleRevision) return;
+    const rules = businessRules.getRules();
+    const record = state.deferredRuleQueue.shift();
+    if (record && state.records.includes(record) && record.responseState === 'ready'
+      && record.businessRuleRevision !== revision) {
+      const data = record.responseJsonParsed ? record.parsedResponseJson : parseJsonText(record.responseBody);
+      const result = ApiCopyBusinessRules.evaluate(data, rules);
+      record.businessState = result.state;
+      record.businessReason = result.reason;
+      record.businessRuleRevision = revision;
+      scheduleRequestList();
+      // 仅更新状态栏文案，不重建正在阅读的 JSON 树 DOM。
+      if (state.selectedId === record.id) renderDetailMeta(record);
+    }
+    scheduleDeferredRuleDrain();
+  }, 0);
+}
 
 const requestFilters = ApiCopyRequestFilters.create({ onChange: renderRequestList });
 const businessRules = ApiCopyBusinessRules.createSettings({
   t,
   onSave(rules) {
+    clearTimeout(state.businessRuleReevalTimer);
+    state.businessRuleReevalTimer = null;
+    state.deferredRuleQueue = [];
+    const revision = ++state.businessRuleRevision;
+
     // 复用已解析 JSON，修改规则不会重新读取响应或重建当前预览。
     for (const record of state.records) {
       if (record.businessState === 'pending') continue;
+      if (record.responseState !== 'ready') {
+        record.businessState = 'unknown';
+        record.businessReason = '';
+        record.businessRuleRevision = revision;
+        continue;
+      }
+      // 未选中的超大响应先让旧判定失效，再排队异步重判，避免列表残留旧规则结果。
+      if (!record.responseJsonParsed && record.responseByteLength > SYNC_JSON_PARSE_LIMIT && record.id !== state.selectedId) {
+        record.businessState = 'unknown';
+        record.businessReason = '';
+        if (rules.enabled && looksLikeJson(record.responseBody, record.mimeType)) {
+          queueDeferredRuleEvaluation(record);
+        } else {
+          record.businessRuleRevision = revision;
+        }
+        continue;
+      }
       const result = ApiCopyBusinessRules.evaluate(getResponseJson(record, record.responseBody), rules);
       record.businessState = result.state;
       record.businessReason = result.reason;
+      record.businessRuleRevision = revision;
     }
     renderRequestList();
     renderDetailMeta(getSelectedRecord());
@@ -191,17 +277,92 @@ function evaluateBusinessResult(body, parsedBody = undefined) {
   return ApiCopyBusinessRules.evaluate(data, businessRules.getRules());
 }
 
-function decodeContent(content, encoding) {
-  if (!content) return '';
-  if (encoding !== 'base64') return content;
-
-  try {
-    const binary = atob(content);
-    const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
-    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-  } catch {
-    return t('base64DecodeFailed');
+// 释放超大响应的解析对象树，避免未选中记录长期占用大量内存。
+function releaseLargeParsedJson(record) {
+  if (!record || record.parsedResponseJson === undefined) return;
+  if (record.responseByteLength > SYNC_JSON_PARSE_LIMIT) {
+    record.parsedResponseJson = undefined;
+    record.responseJsonParsed = false;
   }
+}
+
+function evictResponseBody(record) {
+  record.responseState = 'evicted';
+  record.responseBody = '';
+  record.responseStoredBytes = 0;
+  record.parsedResponseJson = undefined;
+  record.responseJsonParsed = false;
+}
+
+// 控制所有记录累计缓存的响应正文容量；单条新正文放不下时只淘汰自身，避免连带清掉旧缓存。
+function enforceResponseBodyBudget(preferredId = null) {
+  let totalBytes = 0;
+  let incoming = null;
+  let protectedSelectedBytes = 0;
+  for (const item of state.records) {
+    if (item.id !== state.selectedId) releaseLargeParsedJson(item);
+    totalBytes += item.responseStoredBytes;
+    if (item.id === preferredId) incoming = item;
+    if (item.id === state.selectedId && item.id !== preferredId) {
+      protectedSelectedBytes = item.responseStoredBytes;
+    }
+  }
+
+  // 新到来的非选中正文若本身（或加上当前选中正文）已超出预算，直接释放自身，保住已有旧正文。
+  if (incoming && incoming.id !== state.selectedId
+    && incoming.responseStoredBytes + protectedSelectedBytes > MAX_RESPONSE_BODY_BYTES) {
+    totalBytes -= incoming.responseStoredBytes;
+    evictResponseBody(incoming);
+  }
+
+  while (totalBytes > MAX_RESPONSE_BODY_BYTES) {
+    const victim = state.records.find(item => item.responseStoredBytes > 0 && item.id !== state.selectedId && item.id !== preferredId)
+      || state.records.find(item => item.responseStoredBytes > 0 && item.id !== state.selectedId);
+    if (!victim) break;
+    totalBytes -= victim.responseStoredBytes;
+    evictResponseBody(victim);
+  }
+}
+
+// 按正文状态生成界面提示或复制标注，确保提示文案与真实正文彻底分离。
+function getResponseStatusText(record, forCopy = false) {
+  switch (record.responseState) {
+    case 'loading':
+      return forCopy ? t('responseNotReady') : t('loadingResponse');
+    case 'empty':
+      return forCopy ? t('emptyResponse') : t('noReadableResponse');
+    case 'unsupported':
+      return t('unsupportedResponse');
+    case 'decode_error':
+      return t('base64DecodeFailed');
+    case 'binary':
+      return t('binaryResponse', [record.mimeType || 'application/octet-stream', formatFileSize(record.responseByteLength) || '0 B']);
+    case 'evicted':
+      return t('evictedResponse', formatFileSize(record.responseByteLength) || '0 B');
+    default:
+      return '';
+  }
+}
+
+// 按当前过滤 Query 与重复间隔设置重算全部可见记录的重复标记。
+function refreshDuplicateMarks() {
+  const activeRecords = [];
+  for (const record of state.records) {
+    if (isIgnoredRequestUrl(record.url)) {
+      record.duplicateOfId = null;
+      record.duplicateGroupId = null;
+      record.duplicateGapMs = null;
+      record.duplicateIndex = 1;
+      record.duplicateTotal = 1;
+    } else {
+      activeRecords.push(record);
+    }
+  }
+  markDuplicateRequests(activeRecords, {
+    enabled: state.duplicateWarningEnabled,
+    windowMs: state.duplicateWindowMs,
+    getFilteredUrl: filterUrlQuery,
+  });
 }
 
 function addRequest(request) {
@@ -210,13 +371,19 @@ function addRequest(request) {
   if (!isFetchXhrType(resourceType)) return;
   if (isIgnoredRequestUrl(request.request.url)) return;
 
-  // 使用请求特征去重，避免 DevTools 重复回调导致列表重复。
-  const signature = `${request.startedDateTime || ''}|${request.request.method}|${request.request.url}|${request.time || ''}`;
-  if (state.records.some(item => item.signature === signature)) return;
+  // 仅对同一事件对象引用或明确携带相同请求 ID 的回调去重，保留所有并发请求。
+  if (state.seenRequests.has(request)) return;
+  const requestId = request._requestId ?? request.requestId ?? null;
+  if (requestId !== null && state.records.some(item => item.requestId === requestId)) return;
+  state.seenRequests.add(request);
+
+  const responseHeaders = request.response?.headers || [];
+  const headerMimeType = (responseHeaders.find(header => String(header.name || '').toLowerCase() === 'content-type')?.value || '')
+    .split(';', 1)[0].trim();
 
   const record = {
     id: state.nextId++,
-    signature,
+    requestId,
     url: request.request.url,
     method: request.request.method || 'GET',
     status: request.response?.status ?? 0,
@@ -224,18 +391,29 @@ function addRequest(request) {
     requestHeaders: request.request.headers || [],
     queryString: request.request.queryString || [],
     postData: request.request.postData || null,
-    responseHeaders: request.response?.headers || [],
-    mimeType: request.response?.content?.mimeType || '',
+    responseHeaders,
+    mimeType: request.response?.content?.mimeType || headerMimeType,
     resourceType,
     time: request.time ?? null,
     startedDateTime: request.startedDateTime || '',
-    responseBody: t('loadingResponse'),
+    capturedAt: Date.now(),
+    duplicateOfId: null,
+    duplicateGroupId: null,
+    duplicateGapMs: null,
+    duplicateIndex: 1,
+    duplicateTotal: 1,
+    // 正文状态与实际文本分开保存，避免占位提示或二进制乱码混入正文。
+    responseState: 'loading',
+    responseBody: '',
+    responseByteLength: 0,
+    responseStoredBytes: 0,
     responseEncoding: '',
     // 响应 JSON 只解析一次，预览、搜索和排序复用同一份数据。
     parsedResponseJson: undefined,
     responseJsonParsed: false,
     businessState: 'pending',
     businessReason: '',
+    businessRuleRevision: -1,
   };
 
   state.records.push(record);
@@ -243,6 +421,7 @@ function addRequest(request) {
     const removed = state.records.shift();
     if (removed?.id === state.selectedId) state.selectedId = null;
   }
+  refreshDuplicateMarks();
 
   scheduleRequestList();
   if (!state.selectedId && state.previewRecordId !== null) renderDetail();
@@ -252,21 +431,48 @@ function addRequest(request) {
       // 页面清空或记录淘汰后，旧回调不再解析大响应或触发渲染。
       if (!state.records.includes(record)) return;
       record.responseEncoding = encoding || '';
-      const decodedContent = decodeContent(content || '', encoding);
-      const parsedJson = parseJsonText(decodedContent);
-      // 完整响应正文始终保留；JSON 缓存解析结果，树节点按需创建。
-      record.responseBody = decodedContent;
-      record.parsedResponseJson = parsedJson;
-      record.responseJsonParsed = parsedJson !== undefined;
-      if (!content) record.responseBody = t('noReadableResponse');
-      const business = evaluateBusinessResult(record.responseBody, parsedJson);
-      record.businessState = business.state;
-      record.businessReason = business.reason;
+      const decoded = decodeResponseContent(content, encoding, record.mimeType);
+      record.responseState = decoded.state;
+      record.responseBody = decoded.text;
+      record.responseByteLength = decoded.byteLength;
+      record.responseStoredBytes = decoded.state === 'ready' ? decoded.byteLength : 0;
+
+      if (decoded.state !== 'ready' || !looksLikeJson(decoded.text, record.mimeType)) {
+        record.parsedResponseJson = undefined;
+        record.responseJsonParsed = true;
+        record.businessState = 'unknown';
+        record.businessReason = '';
+        record.businessRuleRevision = state.businessRuleRevision;
+      } else if (decoded.byteLength <= SYNC_JSON_PARSE_LIMIT) {
+        const parsedJson = parseJsonText(decoded.text);
+        record.parsedResponseJson = parsedJson;
+        record.responseJsonParsed = true;
+        const business = evaluateBusinessResult(decoded.text, parsedJson);
+        record.businessState = business.state;
+        record.businessReason = business.reason;
+        record.businessRuleRevision = state.businessRuleRevision;
+      } else {
+        // 超大 JSON 不阻塞采集回调，先落盘并视规则开关在后台异步判定业务结果。
+        record.parsedResponseJson = undefined;
+        record.responseJsonParsed = false;
+        record.businessState = 'unknown';
+        record.businessReason = '';
+        record.businessRuleRevision = -1;
+      }
+
+      enforceResponseBodyBudget(record.id);
+      if (record.responseState === 'ready' && !record.responseJsonParsed && record.id !== state.selectedId
+        && businessRules.getRules().enabled && looksLikeJson(record.responseBody, record.mimeType)) {
+        queueDeferredRuleEvaluation(record);
+      }
       scheduleRequestList();
       renderDetailIfSelected(record.id);
     });
   } else {
-    record.responseBody = t('unsupportedResponse');
+    record.responseState = 'unsupported';
+    record.responseBody = '';
+    record.responseStoredBytes = 0;
+    record.responseJsonParsed = true;
     record.businessState = 'unknown';
     record.businessReason = '';
     scheduleRequestList();
@@ -280,7 +486,6 @@ function formatRecord(record) {
   const requestHeaders = headersToObject(record.requestHeaders);
   const responseHeaders = headersToObject(record.responseHeaders);
   const requestBody = getRequestBody(record);
-  const responseBody = tryPretty(record.responseBody, record.mimeType);
   const queryItems = filteredQueryItems(record);
   const bodyLabel = getFormDataItems(record) !== null ? 'FormData:' : 'Request Body:';
   const lines = [
@@ -307,10 +512,16 @@ function formatRecord(record) {
     '',
     'Response Headers:',
     JSON.stringify(responseHeaders, null, 2),
-    '',
-    'Response:',
-    responseBody || t('emptyResponse'),
   );
+
+  if (record.responseState === 'ready') {
+    const responseBody = tryPretty(record.responseBody, record.mimeType, record.parsedResponseJson);
+    lines.push('', 'Response:', responseBody || t('emptyResponse'));
+  } else if (record.responseState === 'empty') {
+    lines.push('', 'Response:', t('emptyResponse'));
+  } else {
+    lines.push('', `Response Body Status: ${getResponseStatusText(record, true)}`);
+  }
 
   return lines.join('\n');
 }
@@ -342,6 +553,7 @@ function setIgnoredQueryParamsFromInput(value) {
 
   state.ignoredQueryParams = names;
   localStorage.setItem(IGNORED_PARAMS_STORAGE_KEY, JSON.stringify(names));
+  refreshDuplicateMarks();
   render();
 }
 
@@ -355,6 +567,7 @@ function setIgnoredUrlPathsFromInput(value) {
 
   state.ignoredUrlPaths = paths;
   localStorage.setItem(IGNORED_PATHS_STORAGE_KEY, JSON.stringify(paths));
+  refreshDuplicateMarks();
 
   // 新规则命中当前请求时同步清空详情，避免列表与 Preview 显示不一致。
   const selected = getSelectedRecord();
@@ -378,6 +591,16 @@ function setPathPrefixSegments(value) {
   el.pathPrefixSegmentsInput.value = String(count);
   localStorage.setItem(PATH_PREFIX_SEGMENTS_STORAGE_KEY, String(count));
   render();
+}
+
+function setDuplicateWindowMs(value) {
+  const parsed = Math.trunc(Number(value));
+  if (!Number.isFinite(parsed) || parsed < 100 || parsed > 60000) return;
+  state.duplicateWindowMs = parsed;
+  try { localStorage.setItem(DUPLICATE_WINDOW_MS_STORAGE_KEY, String(parsed)); } catch {}
+  refreshDuplicateMarks();
+  renderRequestList();
+  renderDetailMeta(getSelectedRecord());
 }
 
 function filterUrlQuery(rawUrl) {
@@ -438,7 +661,6 @@ function formatRecordSimple(record) {
   if (!record) return t('noApiRecords');
 
   const requestBody = getRequestBody(record);
-  const responseBody = tryPretty(record.responseBody, record.mimeType);
   const bodyLabel = getFormDataItems(record) !== null ? 'FormData:' : 'Body:';
   const requestLines = [
     '================ REQUEST ================',
@@ -446,13 +668,23 @@ function formatRecordSimple(record) {
   ];
   if (requestBody) requestLines.push('', bodyLabel, requestBody);
 
+  let responseSection;
+  if (record.responseState === 'ready') {
+    const responseBody = tryPretty(record.responseBody, record.mimeType, record.parsedResponseJson);
+    responseSection = responseBody || t('emptyResponse');
+  } else if (record.responseState === 'empty') {
+    responseSection = t('emptyResponse');
+  } else {
+    responseSection = `Response Body Status: ${getResponseStatusText(record, true)}`;
+  }
+
   return [
     ...requestLines,
     '',
     '================ RESPONSE ===============',
     `Status: ${record.status}${record.statusText ? ` ${record.statusText}` : ''}`,
     '',
-    responseBody || t('emptyResponse'),
+    responseSection,
   ].join('\n');
 }
 
@@ -541,6 +773,8 @@ function createRowCopyButton(kind, title, onCopy) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = `row-copy-btn row-copy-${kind}`;
+  // 默认移出 Tab 顺序，仅选中行启用，避免长列表产生上千个 Tab 停靠点。
+  button.tabIndex = -1;
   const iconPaths = {
     path: ['M10 13a4 4 0 0 0 5.7 0l2.3-2.3A4 4 0 0 0 12.3 5L11 6.3', 'M14 11a4 4 0 0 0-5.7 0L6 13.3A4 4 0 0 0 11.7 19l1.3-1.3'],
     query: ['M10 13a4 4 0 0 0 5.7 0l2.3-2.3A4 4 0 0 0 12.3 5L11 6.3', 'M14 11a4 4 0 0 0-5.7 0L6 13.3A4 4 0 0 0 11.7 19l1.3-1.3', 'M19 16v6M16 19h6'],
@@ -571,17 +805,38 @@ function scheduleRequestList() {
   });
 }
 
-function createRequestRow(record, index) {
+// 悬停或选中重复请求时联动高亮同组全部请求，方便在长列表中一眼看出与哪几条重复。
+function updateDuplicatePeerHighlight(hoveredGroupId = null) {
+  const activeGroup = hoveredGroupId || getSelectedRecord()?.duplicateGroupId || null;
+  const target = activeGroup ? String(activeGroup) : '';
+  for (const row of el.requestList.querySelectorAll('.request-row')) {
+    row.classList.toggle('duplicate-peer', Boolean(target && row.dataset.duplicateGroup === target));
+  }
+}
+
+function getDuplicateTitle(record) {
+  return record.duplicateIndex === 1
+    ? t('duplicateFirstTitle', record.duplicateTotal)
+    : t('duplicateWarningTitle', [record.duplicateIndex, record.duplicateTotal, record.duplicateGapMs ?? 0]);
+}
+
+function createRequestRow(record, displayUrl) {
   const row = document.createElement('div');
   const isBusinessFailure = record.businessState === 'failure';
-  row.className = `request-row${record.id === state.selectedId ? ' selected' : ''}${isBusinessFailure ? ' business-failed' : ''}`;
-  row.title = isBusinessFailure
-    ? `${getDisplayUrl(record.url)}\n${record.businessReason ? t('businessFailureWithReason', record.businessReason) : t('businessFailure')}`
-    : getDisplayUrl(record.url);
+  const isDuplicate = record.duplicateTotal > 1;
+  row.className = `request-row${record.id === state.selectedId ? ' selected' : ''}${isBusinessFailure ? ' business-failed' : ''}${isDuplicate ? ' duplicate-request' : ''}`;
+  row.dataset.duplicateGroup = record.duplicateGroupId ? String(record.duplicateGroupId) : '';
+  const titleLines = [displayUrl];
+  if (isBusinessFailure) {
+    titleLines.push(record.businessReason ? t('businessFailureWithReason', record.businessReason) : t('businessFailure'));
+  }
+  if (isDuplicate) {
+    titleLines.push(getDuplicateTitle(record));
+  }
+  row.title = titleLines.join('\n');
 
   const requestIndex = document.createElement('span');
   requestIndex.className = 'request-index';
-  requestIndex.textContent = String(index + 1);
 
   const method = document.createElement('span');
   method.className = 'method';
@@ -600,8 +855,16 @@ function createRequestRow(record, index) {
 
   const url = document.createElement('span');
   url.className = 'url';
-  url.textContent = getDisplayUrl(record.url);
+  url.textContent = displayUrl;
   urlCell.appendChild(url);
+
+  if (isDuplicate) {
+    const dupBadge = document.createElement('span');
+    dupBadge.className = 'duplicate-warn-badge';
+    dupBadge.textContent = t('duplicateBadge', [record.duplicateIndex, record.duplicateTotal]);
+    dupBadge.title = getDuplicateTitle(record);
+    urlCell.appendChild(dupBadge);
+  }
 
   if (isBusinessFailure) {
     const badge = document.createElement('span');
@@ -609,7 +872,7 @@ function createRequestRow(record, index) {
     badge.textContent = t('businessFailure');
     badge.title = record.businessReason || t('businessResponseFailed');
     urlCell.appendChild(badge);
-}
+  }
 
   const rowActions = document.createElement('span');
   rowActions.className = 'row-copy-actions';
@@ -661,10 +924,19 @@ function renderRequestList() {
 
   let anchor = el.requestList.firstElementChild;
   for (const [index, record] of displayRecords.entries()) {
-    const rowKey = JSON.stringify([index, getDisplayUrl(record.url), record.businessState, record.businessReason]);
+    const displayUrl = getDisplayUrl(record.url);
+    const rowKey = JSON.stringify([
+      displayUrl,
+      record.businessState === 'failure',
+      record.businessReason,
+      record.duplicateGroupId,
+      record.duplicateIndex,
+      record.duplicateTotal,
+      record.duplicateGapMs,
+    ]);
     let row = existing.get(record.id);
     if (!row || row.dataset.rowKey !== rowKey) {
-      const replacement = createRequestRow(record, index);
+      const replacement = createRequestRow(record, displayUrl);
       replacement.dataset.recordId = String(record.id);
       replacement.dataset.rowKey = rowKey;
       if (row) {
@@ -673,11 +945,21 @@ function renderRequestList() {
       }
       row = replacement;
     }
-    row.classList.toggle('selected', record.id === state.selectedId);
+    // 插入或淘汰其他请求时只更新序号，保留当前行的复制按钮及焦点。
+    const requestIndex = row.firstElementChild;
+    const rowNumber = String(index + 1);
+    if (requestIndex.textContent !== rowNumber) requestIndex.textContent = rowNumber;
+    const isSelected = record.id === state.selectedId;
+    row.classList.toggle('selected', isSelected);
+    // 只有当前选中行的快捷复制按钮进入 Tab 顺序，上下键切换后再按 Tab 即可直达。
+    for (const button of row.lastElementChild.children) {
+      button.tabIndex = isSelected ? 0 : -1;
+    }
     // 保留没有变化的 DOM 节点、滚动位置与用户文字选区。
     if (row !== anchor) el.requestList.insertBefore(row, anchor);
     anchor = row.nextElementSibling;
   }
+  updateDuplicatePeerHighlight(null);
 }
 
 function render() {
@@ -704,8 +986,12 @@ function saveRequestView() {
 
 function selectRecord(id) {
   if (state.selectedId === id) return;
+  const previousRecord = getSelectedRecord();
   saveRequestView();
   state.selectedId = id;
+  releaseLargeParsedJson(previousRecord);
+  // 若刚才选中的是单条超预算响应，切走后立即纳入容量预算回收。
+  enforceResponseBodyBudget();
   const view = getSelectedRecord()?.viewState;
   state.previewOpenStates = view?.openStates || null;
   state.previewExpandedValues = view?.expandedValues || new Set();
@@ -744,6 +1030,10 @@ function moveSelection(delta) {
   }
 
   selectRecord(records[index].id);
+  // 若焦点原先停在旧行的快捷按钮上，切行后收回列表容器，避免旧行继续高亮操作区。
+  if (document.activeElement !== el.requestList && el.requestList.contains(document.activeElement)) {
+    el.requestList.focus({ preventScroll: true });
+  }
   requestAnimationFrame(scrollSelectedRowIntoView);
 }
 
@@ -967,23 +1257,40 @@ function renderPreview(record) {
   const matchIndex = state.previewMatchIndex;
   clearPreviewSearchMatches();
   state.previewMatchIndex = matchIndex;
-  const raw = record.responseBody || '';
-  const trimmed = typeof raw === 'string' ? raw.trim() : '';
-  const query = el.previewSearchInput.value.trim().toLowerCase();
-  // 搜索和清空搜索时都沿用原有展开状态，仅对命中路径作额外展开。
-  const openStates = state.previewOpenStates;
 
-  const placeholderResponses = new Set([t('loadingResponse'), t('noReadableResponse'), t('unsupportedResponse')]);
-  if (!trimmed || placeholderResponses.has(raw)) {
+  if (record.responseState !== 'ready') {
     const placeholder = document.createElement('div');
     placeholder.className = 'preview-placeholder';
-    placeholder.textContent = raw || t('emptyResponse');
+    placeholder.textContent = getResponseStatusText(record, false) || t('emptyResponse');
     el.previewContent.appendChild(placeholder);
     return;
   }
 
-  if (record.mimeType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
+  const raw = record.responseBody || '';
+  const trimmed = raw.trim();
+  const query = el.previewSearchInput.value.trim().toLowerCase();
+  // 搜索和清空搜索时都沿用原有展开状态，仅对命中路径作额外展开。
+  const openStates = state.previewOpenStates;
+
+  if (!trimmed) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'preview-placeholder';
+    placeholder.textContent = t('emptyResponse');
+    el.previewContent.appendChild(placeholder);
+    return;
+  }
+
+  if (looksLikeJson(trimmed, record.mimeType)) {
     const data = getResponseJson(record, trimmed);
+    if (record.businessRuleRevision !== state.businessRuleRevision) {
+      // 超大 JSON 首次选中或规则变更后，复用此次解析结果同步补判业务状态，避免后台重复解析。
+      const business = evaluateBusinessResult(raw, data);
+      record.businessState = business.state;
+      record.businessReason = business.reason;
+      record.businessRuleRevision = state.businessRuleRevision;
+      renderDetailMeta(record);
+      scheduleRequestList();
+    }
     if (data !== undefined) {
       el.previewContent.appendChild(buildJsonNode(data, null, 0, query, openStates));
       for (const line of el.previewContent.querySelectorAll('.json-long-line[data-match-path]')) {
@@ -1018,7 +1325,12 @@ function renderDetailMeta(record) {
   const businessMeta = record.businessState === 'failure'
     ? ` · ${record.businessReason ? t('businessFailureMetaWithReason', record.businessReason) : t('businessFailureMeta')}`
     : '';
-  el.detailMeta.textContent = `${record.status}${record.statusText ? ` ${record.statusText}` : ''}${record.mimeType ? ` · ${record.mimeType}` : ''}${record.time != null ? ` · ${Math.round(record.time)} ms` : ''}${businessMeta}`;
+  const duplicateMeta = record.duplicateTotal > 1
+    ? ` · ${record.duplicateIndex === 1
+      ? t('duplicateFirstMeta', record.duplicateTotal)
+      : t('duplicateMeta', [record.duplicateIndex, record.duplicateTotal, record.duplicateGapMs ?? 0])}`
+    : '';
+  el.detailMeta.textContent = `${record.status}${record.statusText ? ` ${record.statusText}` : ''}${record.mimeType ? ` · ${record.mimeType}` : ''}${record.time != null ? ` · ${Math.round(record.time)} ms` : ''}${businessMeta}${duplicateMeta}`;
   el.detailMeta.title = el.detailMeta.textContent;
   el.detailMeta.classList.toggle('business-failed-meta', record.businessState === 'failure');
 }
@@ -1059,6 +1371,15 @@ function copyText(text, trigger = null) {
 el.filterInput.addEventListener('input', () => {
   el.filterClearBtn.hidden = !el.filterInput.value;
   renderRequestList();
+});
+
+el.requestList.addEventListener('pointerover', event => {
+  const row = event.target instanceof Element ? event.target.closest('.request-row') : null;
+  updateDuplicatePeerHighlight(row?.dataset.duplicateGroup || null);
+});
+
+el.requestList.addEventListener('pointerleave', () => {
+  updateDuplicatePeerHighlight(null);
 });
 
 el.filterClearBtn.addEventListener('click', () => {
@@ -1155,6 +1476,9 @@ el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
 el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
 el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
 el.showUrlQueryInput.checked = state.showUrlQuery;
+el.duplicateWarningInput.checked = state.duplicateWarningEnabled;
+el.duplicateWindowMsInput.value = String(state.duplicateWindowMs);
+el.duplicateWindowMsInput.disabled = !state.duplicateWarningEnabled;
 el.ignoredParamsInput.addEventListener('input', event => {
   setIgnoredQueryParamsFromInput(event.target.value);
 });
@@ -1178,19 +1502,49 @@ el.showUrlQueryInput.addEventListener('change', event => {
   render();
 });
 
+el.duplicateWarningInput.addEventListener('change', event => {
+  state.duplicateWarningEnabled = event.target.checked;
+  el.duplicateWindowMsInput.disabled = !state.duplicateWarningEnabled;
+  try { localStorage.setItem(DUPLICATE_WARNING_STORAGE_KEY, String(state.duplicateWarningEnabled)); } catch {}
+  refreshDuplicateMarks();
+  renderRequestList();
+  renderDetailMeta(getSelectedRecord());
+});
+
+el.duplicateWindowMsInput.addEventListener('input', event => {
+  if (event.target.value === '') return;
+  setDuplicateWindowMs(event.target.value);
+});
+
+el.duplicateWindowMsInput.addEventListener('blur', () => {
+  if (el.duplicateWindowMsInput.value.trim() !== '') {
+    const clamped = Math.min(Math.max(Math.trunc(Number(el.duplicateWindowMsInput.value)), 100), 60000);
+    if (Number.isFinite(clamped)) setDuplicateWindowMs(clamped);
+  }
+  el.duplicateWindowMsInput.value = String(state.duplicateWindowMs);
+});
+
 el.resetIgnoredParamsBtn.addEventListener('click', () => {
   state.ignoredQueryParams = [...DEFAULT_IGNORED_QUERY_PARAMS];
   state.ignoredUrlPaths = [...DEFAULT_IGNORED_URL_PATHS];
   state.pathPrefixSegments = DEFAULT_PATH_PREFIX_SEGMENTS;
   state.showUrlQuery = false;
+  state.duplicateWarningEnabled = true;
+  state.duplicateWindowMs = DEFAULT_DUPLICATE_WINDOW_MS;
   localStorage.setItem(IGNORED_PARAMS_STORAGE_KEY, JSON.stringify(state.ignoredQueryParams));
   localStorage.setItem(IGNORED_PATHS_STORAGE_KEY, JSON.stringify(state.ignoredUrlPaths));
   localStorage.setItem(PATH_PREFIX_SEGMENTS_STORAGE_KEY, String(state.pathPrefixSegments));
   localStorage.setItem(SHOW_URL_QUERY_STORAGE_KEY, String(state.showUrlQuery));
+  localStorage.setItem(DUPLICATE_WARNING_STORAGE_KEY, String(state.duplicateWarningEnabled));
+  localStorage.setItem(DUPLICATE_WINDOW_MS_STORAGE_KEY, String(state.duplicateWindowMs));
   el.ignoredParamsInput.value = state.ignoredQueryParams.join(',');
   el.ignoredPathsInput.value = state.ignoredUrlPaths.join(',');
   el.pathPrefixSegmentsInput.value = String(state.pathPrefixSegments);
   el.showUrlQueryInput.checked = state.showUrlQuery;
+  el.duplicateWarningInput.checked = state.duplicateWarningEnabled;
+  el.duplicateWindowMsInput.value = String(state.duplicateWindowMs);
+  el.duplicateWindowMsInput.disabled = false;
+  refreshDuplicateMarks();
 
   const selected = getSelectedRecord();
   if (selected && isIgnoredRequestUrl(selected.url)) {
@@ -1208,10 +1562,15 @@ el.resetIgnoredParamsBtn.addEventListener('click', () => {
 
 function clearRequestRecords(placeholderText) {
   clearTimeout(state.previewSearchTimer);
+  clearTimeout(state.businessRuleReevalTimer);
+  state.businessRuleReevalTimer = null;
+  state.deferredRuleQueue = [];
+  state.businessRuleRevision += 1;
   state.previewSearchIndex = null;
   state.previewExpandedValues = new Set();
   el.requestParamsContent.dataset.cacheKey = '';
   state.records = [];
+  state.seenRequests = new WeakSet();
   state.selectedId = null;
   state.nextId = 1;
   state.previewOpenStates = null;
@@ -1436,23 +1795,30 @@ el.requestParamsSplitter.addEventListener('dblclick', () => {
 
 // 普通网页预览使用本地样例走同一套渲染流程，不发送任何模拟网络请求。
 async function loadPreviewRequests() {
+  // 给样例分配明确的时间间隔，方便同时演示正常请求与短时间内的重复请求警告。
+  const sampleBaseTime = Date.parse('2026-09-12T02:30:00.000Z');
+  const sampleTime = offsetMs => new Date(sampleBaseTime + offsetMs).toISOString();
   // 响应字段故意不按字母排列，便于检查排序切换、搜索和复杂值展示。
   const samples = [
     {
       path: '/jsfulldatasave-be/savedatasfromjs?event=page_view', method: 'POST', status: 200, time: 12,
+      startedDateTime: sampleTime(0),
       requestBody: { event: 'page_view' }, body: { code: 200 },
     },
     {
       path: '/api/projects/overview', method: 'GET', status: 200, time: 86,
+      startedDateTime: sampleTime(1000),
       body: { isSuccess: true, message: '查询成功', code: 200, data: { total: 24, active: 18, archived: 6 } },
     },
     {
       path: '/api/projects/create', method: 'POST', status: 200, time: 245,
+      startedDateTime: sampleTime(3000),
       requestBody: { name: '接口调试工具', owner: '示例用户', tags: ['前端', '开发工具'] },
       body: { isSuccess: true, message: '创建成功', code: 200, data: { id: 'demo-1025', name: '接口调试工具', createdAt: '2026-09-12 10:30:00' } },
     },
     {
       path: '/api/projects/upload', method: 'POST', status: 200, time: 418,
+      startedDateTime: sampleTime(5000),
       postData: {
         mimeType: 'multipart/form-data; boundary=----ApiCopyDemoBoundary',
         params: [
@@ -1465,20 +1831,24 @@ async function loadPreviewRequests() {
     },
     {
       path: '/api/projects/demo-1025', method: 'PUT', status: 200, time: 132,
+      startedDateTime: sampleTime(7000),
       requestBody: { name: '重复的项目名称', version: 1 },
       body: { isSuccess: false, message: '项目名称已存在，请修改后重试', code: 409, data: null },
     },
     {
       path: '/api/reports/export', method: 'POST', status: 500, time: 1532,
+      startedDateTime: sampleTime(9000),
       requestBody: { projectId: 'demo-1025', format: 'xlsx' },
       body: { message: '报表服务暂时不可用', requestId: 'demo-request-500', details: { retryable: true, retryAfter: 30 } },
     },
     {
       path: '/api/health', method: 'GET', status: 200, time: 18,
+      startedDateTime: sampleTime(11000),
       body: 'Service is healthy. This is a plain text response.',
     },
     {
       path: '/api/his/his/his/networkConfigSpec/view/cuOwnership?page=1&pageSize=20&keyword=demo&_t=1789180200000', method: 'GET', status: 200, time: 168,
+      startedDateTime: sampleTime(13000),
       body: {
         isSuccess: true, message: '查询成功', code: 200,
         data: {
@@ -1493,26 +1863,48 @@ async function loadPreviewRequests() {
     },
   ];
 
+  let defaultSelectedIndex = samples.length - 1;
   try {
     // 使用脱敏的大响应 fixture 验证性能；它不进入扩展安装包。
     const response = await fetch('./fixtures/large-cost-analysis-response.json', { cache: 'no-store' });
     if (!response.ok) throw new Error(`Failed to load large response fixture: ${response.status}`);
     samples.push({
       path: '/his/his/vehicleFunction/cost/analysis/list', method: 'POST', status: 200, time: 1864,
+      startedDateTime: sampleTime(15000),
       requestBody: { vehicleCode: 'P567', versionId: '23' },
       body: await response.json(),
     });
+    defaultSelectedIndex = samples.length - 1;
   } catch (error) {
     // fixture 缺失不影响正常预览，方便只打开单个 HTML 文件进行样式调试。
     console.warn('Unable to load large response fixture.', error);
   }
 
-  for (const sample of samples) {
+  // 模拟短时间内连续 3 次重复提交的相同 POST /create，在列表中紧邻展示“重复 1/3、2/3、3/3”效果。
+  samples.push(
+    {
+      path: '/api/projects/create', method: 'POST', status: 200, time: 238,
+      startedDateTime: sampleTime(3120),
+      requestBody: { name: '接口调试工具', owner: '示例用户', tags: ['前端', '开发工具'] },
+      body: { isSuccess: true, message: '创建成功', code: 200, data: { id: 'demo-1025', name: '接口调试工具', createdAt: '2026-09-12 10:30:00' } },
+    },
+    {
+      path: '/api/projects/create', method: 'POST', status: 200, time: 251,
+      startedDateTime: sampleTime(3300),
+      requestBody: { name: '接口调试工具', owner: '示例用户', tags: ['前端', '开发工具'] },
+      body: { isSuccess: true, message: '创建成功', code: 200, data: { id: 'demo-1025', name: '接口调试工具', createdAt: '2026-09-12 10:30:00' } },
+    },
+  );
+
+  let defaultSelectedId = null;
+  for (const [sampleIndex, sample] of samples.entries()) {
     // 使用保留域名和明确的假 Token，复制结果也不会包含真实凭据。
     const url = new URL(sample.path, 'https://api.example.test');
     const mimeType = typeof sample.body === 'string' ? 'text/plain' : 'application/json';
+    const beforeCount = state.records.length;
     addRequest({
       _resourceType: 'fetch',
+      startedDateTime: sample.startedDateTime,
       time: sample.time,
       request: {
         url: url.href, method: sample.method,
@@ -1528,9 +1920,12 @@ async function loadPreviewRequests() {
         callback(typeof sample.body === 'string' ? sample.body : JSON.stringify(sample.body), '');
       },
     });
+    if (sampleIndex === defaultSelectedIndex && state.records.length > beforeCount) {
+      defaultSelectedId = state.records[state.records.length - 1].id;
+    }
   }
-  // 默认选中最后一条样例；本地服务可用时即为大响应，便于性能调试。
-  selectRecord(state.records[state.records.length - 1].id);
+  // 默认选中大响应样例，便于性能调试。
+  selectRecord(defaultSelectedId ?? state.records[state.records.length - 1].id);
 }
 
 if (globalThis.chrome?.devtools?.network) {

@@ -10,17 +10,18 @@ globalThis.ApiCopyRequestFilters = (() => {
     const method = String(record.method).toUpperCase();
     if (filters.method === 'other' ? ['GET', 'POST'].includes(method)
       : filters.method !== 'all' && filters.method !== method) return false;
-    // 两类失败同时开启时取并集；慢请求与方法条件再取交集。
+    // 两类失败同时开启时取并集；慢请求、重复请求与方法条件再取交集。
     if ((filters.httpFailure || filters.businessFailure)
       && !((filters.httpFailure && isHttpFailure(record))
         || (filters.businessFailure && record.businessState === 'failure'))) return false;
+    if (filters.duplicate && !(record.duplicateTotal > 1)) return false;
     return !filters.slow || (Number.isFinite(record.time) && record.time >= filters.slowMs);
   }
 
   function create({ onChange }) {
     let slowMs = Number(localStorage.getItem(STORAGE_KEY));
     if (!Number.isFinite(slowMs) || slowMs < 1) slowMs = 1000;
-    const filters = { method: 'all', httpFailure: false, businessFailure: false, slow: false, slowMs };
+    const filters = { method: 'all', httpFailure: false, businessFailure: false, slow: false, duplicate: false, slowMs };
     const root = document.querySelector('#requestQuickFilters');
     const buttons = [...root.querySelectorAll('[data-method], [data-filter]')];
     const threshold = root.querySelector('input');
@@ -34,7 +35,7 @@ globalThis.ApiCopyRequestFilters = (() => {
       }
       threshold.value = String(filters.slowMs);
       root.querySelector('.slow-threshold').hidden = !filters.slow;
-      reset.hidden = filters.method === 'all' && !filters.httpFailure && !filters.businessFailure && !filters.slow;
+      reset.hidden = filters.method === 'all' && !filters.httpFailure && !filters.businessFailure && !filters.slow && !filters.duplicate;
     }
 
     root.addEventListener('click', event => {
@@ -43,7 +44,7 @@ globalThis.ApiCopyRequestFilters = (() => {
       if (button.dataset.method) filters.method = button.dataset.method;
       else if (button.dataset.filter) filters[button.dataset.filter] = !filters[button.dataset.filter];
       else if (button.hasAttribute('data-filter-reset')) {
-        Object.assign(filters, { method: 'all', httpFailure: false, businessFailure: false, slow: false });
+        Object.assign(filters, { method: 'all', httpFailure: false, businessFailure: false, slow: false, duplicate: false });
       } else return;
       render();
       onChange();

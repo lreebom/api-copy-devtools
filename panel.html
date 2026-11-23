@@ -72,6 +72,7 @@
               <button type="button" class="filter-chip" data-filter="httpFailure" aria-pressed="false" title="只看 HTTP 失败（状态码 0 或 ≥400）" data-i18n-title="httpFailureFilterTitle" data-i18n="httpFailureFilter">HTTP失败</button>
               <button type="button" class="filter-chip" data-filter="businessFailure" aria-pressed="false" title="只看不符合业务成功规则的请求" data-i18n-title="businessFailureFilterTitle" data-i18n="businessFailureFilter">业务失败</button>
               <button type="button" class="filter-chip" data-filter="slow" aria-pressed="false" data-i18n="slowRequests">慢请求</button>
+              <button type="button" class="filter-chip" data-filter="duplicate" aria-pressed="false" title="只看设定时间间隔内重复发出的相同请求" data-i18n-title="duplicateFilterTitle" data-i18n="duplicateFilter">重复</button>
             </div>
             <label class="slow-threshold" hidden><span data-i18n="slowThreshold">耗时 ≥</span><input type="number" min="1" step="1" value="1000" aria-label="慢请求阈值（毫秒）" data-i18n-aria-label="slowThresholdLabel" /> ms</label>
             <button type="button" class="ghost filter-reset" data-filter-reset hidden data-i18n="resetQuickFilters">重置筛选</button>
@@ -164,6 +165,12 @@
           <div class="param-filter-label" data-i18n="showUrlQuery">列表展示 Query 参数</div>
           <label class="setting-checkbox"><input id="showUrlQueryInput" type="checkbox" /><span data-i18n="showUrlQueryEnabled">展示</span></label>
           <div class="param-filter-help" data-i18n="showUrlQueryHelp">默认不展示；Query 参数仍可在下方请求参数区域查看。</div>
+        </div>
+        <div class="filter-setting-row">
+          <div class="param-filter-label" data-i18n="duplicateWarningSetting">重复请求警告</div>
+          <label class="setting-checkbox"><input id="duplicateWarningInput" type="checkbox" checked /><span data-i18n="duplicateWarningEnabled">识别并标记重复请求</span></label>
+          <label class="duplicate-window-field"><span data-i18n="duplicateWindowMsLabel">重复判定间隔（毫秒）</span><input id="duplicateWindowMsInput" class="filter-setting-input" type="number" min="100" max="60000" step="100" value="1000" /></label>
+          <div class="param-filter-help" data-i18n="duplicateWindowMsHelp">在设定间隔内连续发出方法、过滤后 URL 与请求体完全相同的请求时，在第 2 次及后续行显示警告徽标。默认 1000 ms。</div>
         </div>
         </section>
         <section id="settingsFilterPanel" class="settings-tab-panel" role="tabpanel" aria-labelledby="settingsFilterTab" data-settings-panel="filter" hidden>

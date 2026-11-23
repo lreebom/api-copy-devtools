@@ -21,7 +21,7 @@ frame.addEventListener('load', async () => {
     const panel = frame.contentWindow;
     const doc = frame.contentDocument;
     const rows = () => doc.querySelectorAll('.request-row');
-    await waitFor(() => rows().length === 8);
+    await waitFor(() => rows().length === 10);
     const requestSort=doc.querySelector('#requestSortBtn');
     check(requestSort.getAttribute('aria-pressed')===String(panel.localStorage.getItem('apiCopyRequestSortOrder')==='newest'),
       '列表排序正确读取已保存的顺序，默认较早请求在前');
@@ -101,7 +101,7 @@ frame.addEventListener('load', async () => {
     check([...rows()].map(row=>row.dataset.recordId).join(',')===originalOrder.join(','), '再次点击恢复正序');
     const requestSearch = doc.querySelector('#filterInput');
     const originalUrl = panel.getSelectedRecord().url;
-    const displayPath = rows()[6].querySelector('.url').textContent;
+    const displayPath = doc.querySelector('.request-row[data-record-id="7"] .url').textContent;
     for (const keyword of [new URL(originalUrl).hostname.toUpperCase(), '/api/his/his/', '_t=1789180200000', originalUrl, 'cuOwnership']) {
       requestSearch.value = keyword;
       requestSearch.dispatchEvent(new panel.Event('input', { bubbles: true }));
@@ -112,7 +112,7 @@ frame.addEventListener('load', async () => {
     check(rows().length === 0, 'URL 搜索与请求方法筛选同时生效');
     doc.querySelector('[data-method="all"]').click();
     doc.querySelector('#filterClearBtn').click();
-    check(rows().length === 8, '清空请求筛选后恢复列表');
+    check(rows().length === 10, '清空请求筛选后恢复列表');
     const prefixInput = doc.querySelector('#pathPrefixSegmentsInput');
     const queryToggle = doc.querySelector('#showUrlQueryInput');
     const savedPrefix = prefixInput.value;
@@ -320,12 +320,18 @@ frame.addEventListener('load', async () => {
       && pressArrow(doc.querySelector('#requestList'),'ArrowDown') && panel.getSelectedRecord().id===1,
       '倒序时上下键按当前显示顺序切换请求');
     const descendingPreview=preview.firstElementChild;
+    const descendingRows=[...rows()];
+    const focusedCopyButton=descendingRows[1].querySelector('.row-copy-query');
+    focusedCopyButton.focus({preventScroll:true});
     panel.addRequest({...request('https://example.test/earlier','{}'),startedDateTime:'2000-01-01T00:00:00.000Z'});
     panel.addRequest({...request('https://example.test/latest','{}'),startedDateTime:'2099-01-01T00:00:00.000Z'});
     await waitFor(()=>rows().length===5);
     check(rows()[0].dataset.recordId==='5' && rows()[4].dataset.recordId==='4'
       && panel.getSelectedRecord().id===1 && preview.firstElementChild===descendingPreview,
       '倒序新增请求按开始时间插入，延迟到达的旧请求不置顶且当前 JSON 不刷新');
+    check(descendingRows.every(row=>row.isConnected) && doc.activeElement===focusedCopyButton
+      && [...rows()].every((row,index)=>row.querySelector('.request-index').textContent===String(index+1)),
+      '倒序插入请求只调整现有行的序号，保留节点和复制按钮焦点');
     requestSort.click();
     panel.addRequest(request('https://example.test/d','{}',true));
     panel.clearRequestRecords('已清空');
@@ -580,6 +586,240 @@ frame.addEventListener('load', async () => {
     }
     doc.documentElement.style.removeProperty('--list-width');
     panel.localStorage.removeItem('apiCopyListWidth');
+    // 1. 并发同地址、同时间戳、不同请求体的 POST 必须全部保留；仅同一事件对象或同 requestId 才去重。
+    const beforeConcurrent = rows().length;
+    const sameStamp = '2026-11-23T06:00:00.000Z';
+    const postA = {
+      ...request('https://example.test/concurrent', '{"ok":1}'),
+      startedDateTime: sameStamp, time: 20,
+      request: { url: 'https://example.test/concurrent', method: 'POST', headers: [], queryString: [], postData: { mimeType: 'application/json', text: '{"page":1}' } },
+    };
+    const postB = {
+      ...request('https://example.test/concurrent', '{"ok":2}'),
+      startedDateTime: sameStamp, time: 20,
+      request: { url: 'https://example.test/concurrent', method: 'POST', headers: [], queryString: [], postData: { mimeType: 'application/json', text: '{"page":2}' } },
+    };
+    const withId1 = { ...request('https://example.test/dedupe-id', '{"ok":3}'), _requestId: 'req-same-id' };
+    const withId2 = { ...request('https://example.test/dedupe-id', '{"ok":4}'), _requestId: 'req-same-id' };
+    panel.addRequest(postA);
+    panel.addRequest(postA);
+    panel.addRequest(postB);
+    panel.addRequest(withId1);
+    panel.addRequest(withId2);
+    await waitFor(() => rows().length === beforeConcurrent + 3);
+    check(rows().length === beforeConcurrent + 3, '并发同地址不同请求体全部保留，仅同一事件对象或同 requestId 去重');
+    check([...rows()].filter(row => row.textContent.includes('/concurrent')).every(row => !row.querySelector('.duplicate-warn-badge')),
+      '同地址不同请求体的并发 POST 不误报重复请求警告');
+
+    // 1.5 重复请求警告、时间间隔设置与快捷筛选。
+    const beforeDup = rows().length;
+    const dupBase = Date.now() - 5000;
+    const dupIso = offset => new Date(dupBase + offset).toISOString();
+    panel.addRequest({
+      ...request('https://example.test/dup-check?page=1&_t=101', '{"ok":1}'),
+      startedDateTime: dupIso(0),
+      request: { url: 'https://example.test/dup-check?page=1&_t=101', method: 'GET', headers: [], queryString: [] },
+    });
+    panel.addRequest({
+      ...request('https://example.test/dup-check?page=1&_t=102', '{"ok":1}'),
+      startedDateTime: dupIso(250),
+      request: { url: 'https://example.test/dup-check?page=1&_t=102', method: 'GET', headers: [], queryString: [] },
+    });
+    panel.addRequest({
+      ...request('https://example.test/dup-check?page=1&_t=103', '{"ok":1}'),
+      startedDateTime: dupIso(1800),
+      request: { url: 'https://example.test/dup-check?page=1&_t=103', method: 'GET', headers: [], queryString: [] },
+    });
+    await waitFor(() => rows().length === beforeDup + 3);
+    const dupRows = () => [...rows()].filter(row => row.textContent.includes('/dup-check'));
+    check(dupRows().length === 3
+      && dupRows()[0].querySelector('.duplicate-warn-badge')?.textContent === '重复 1/2'
+      && dupRows()[1].querySelector('.duplicate-warn-badge')?.textContent === '重复 2/2'
+      && !dupRows()[2].querySelector('.duplicate-warn-badge'),
+      '默认 1000 ms 间隔下，过滤 _t 后为同组重复请求统一标注“重复 1/2、2/2”徽标');
+    const dupRowActions = dupRows()[1].querySelector('.row-copy-actions').getBoundingClientRect();
+    const dupBadgeRect = dupRows()[1].querySelector('.duplicate-warn-badge').getBoundingClientRect();
+    check(dupRowActions.right >= dupBadgeRect.right - 0.5,
+      '行内快捷复制按钮右边缘完全覆盖重复徽标，不漏出右侧边框');
+    dupRows()[1].click();
+    check(dupRows()[0].classList.contains('duplicate-peer') && dupRows()[1].classList.contains('duplicate-peer')
+      && !dupRows()[2].classList.contains('duplicate-peer'),
+      '选中重复请求时同组其他请求同步高亮便于对照');
+    clickFilter('[data-filter="duplicate"]');
+    check(rows().length === 2 && rows()[0].querySelector('.duplicate-warn-badge')?.textContent === '重复 1/2'
+      && rows()[1].querySelector('.duplicate-warn-badge')?.textContent === '重复 2/2',
+      '重复快捷筛选展示同组全部重复请求方便对比');
+    clickFilter('[data-filter-reset]');
+    const dupToggle = doc.querySelector('#duplicateWarningInput');
+    const dupWindow = doc.querySelector('#duplicateWindowMsInput');
+    dupWindow.value = '2000';
+    dupWindow.dispatchEvent(new panel.Event('input'));
+    check(dupRows()[0].querySelector('.duplicate-warn-badge')?.textContent === '重复 1/3'
+      && dupRows()[1].querySelector('.duplicate-warn-badge')?.textContent === '重复 2/3'
+      && dupRows()[2].querySelector('.duplicate-warn-badge')?.textContent === '重复 3/3'
+      && panel.localStorage.getItem('apiCopyDuplicateWindowMs') === '2000',
+      '设置中调大重复判定间隔即时更新为 1/3、2/3、3/3 并持久化');
+    dupToggle.checked = false;
+    dupToggle.dispatchEvent(new panel.Event('change'));
+    check(!doc.querySelector('.duplicate-warn-badge') && dupWindow.disabled,
+      '关闭重复请求警告后立即清除徽标并禁用间隔输入');
+    dupToggle.checked = true;
+    dupToggle.dispatchEvent(new panel.Event('change'));
+    dupWindow.value = '1000';
+    dupWindow.dispatchEvent(new panel.Event('input'));
+
+    // 2. 只有当前选中行的快捷复制按钮进入 Tab 顺序，避免长列表产生大量 Tab 停靠点。
+    panel.selectRecord(Number(rows()[0].dataset.recordId));
+    const tabbableRowButtons = () => [...doc.querySelectorAll('.row-copy-btn')].filter(button => button.tabIndex >= 0);
+    check(tabbableRowButtons().length === 3 && tabbableRowButtons().every(button => button.closest('.request-row').classList.contains('selected')),
+      '仅选中行的 3 个快捷复制按钮可 Tab 聚焦');
+    pressArrow(doc.querySelector('#requestList'), 'ArrowDown');
+    check(tabbableRowButtons().length === 3 && tabbableRowButtons().every(button => button.closest('.request-row').classList.contains('selected')),
+      '方向键切换选中行后，Tab 停靠点同步转移到新选中行');
+    const selectedRowCopyBtn = tabbableRowButtons()[0];
+    selectedRowCopyBtn.focus({ preventScroll: true });
+    pressArrow(selectedRowCopyBtn, 'ArrowDown');
+    check(doc.activeElement === doc.querySelector('#requestList'),
+      '焦点在行内按钮时按方向键切行，焦点收回列表避免旧行继续高亮操作区');
+
+    // 3. 二进制 PNG、异步加载中与接口真实返回占位同名文本各自独立处理。
+    const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    const beforeSpecial = rows().length;
+    panel.addRequest({
+      _resourceType: 'fetch', startedDateTime: new Date().toISOString(), time: 12,
+      request: { url: 'https://example.test/download.png', method: 'GET', headers: [], queryString: [] },
+      response: { status: 200, statusText: 'OK', headers: [{ name: 'Content-Type', value: 'image/png' }], content: { mimeType: 'image/png' } },
+      getContent: done => done(pngBase64, 'base64'),
+    });
+    let finishPending;
+    panel.addRequest({
+      _resourceType: 'fetch', startedDateTime: new Date().toISOString(), time: 12,
+      request: { url: 'https://example.test/still-loading', method: 'GET', headers: [], queryString: [] },
+      response: { status: 200, statusText: 'OK', headers: [], content: { mimeType: 'application/json' } },
+      getContent: done => { finishPending = done; },
+    });
+    panel.addRequest({
+      _resourceType: 'fetch', startedDateTime: new Date().toISOString(), time: 12,
+      request: { url: 'https://example.test/literal-loading-text', method: 'GET', headers: [], queryString: [] },
+      response: { status: 200, statusText: 'OK', headers: [], content: { mimeType: 'text/plain' } },
+      getContent: done => done('[正在读取响应内容…]', ''),
+    });
+    await waitFor(() => rows().length === beforeSpecial + 3);
+    rows()[beforeSpecial].click();
+    const pngRecord = panel.getSelectedRecord();
+    check(pngRecord.responseState === 'binary' && pngRecord.responseBody === ''
+      && preview.textContent.includes('二进制响应') && preview.textContent.includes('image/png')
+      && panel.formatRecord(pngRecord).includes('Response Body Status: [二进制响应：image/png · 68 B]')
+      && !panel.formatRecord(pngRecord).includes('\nResponse:\n'),
+      '二进制 PNG 不按 UTF-8 解码成乱码，预览和复制均明确标注二进制状态');
+    rows()[beforeSpecial + 1].click();
+    const loadingRecord = panel.getSelectedRecord();
+    check(loadingRecord.responseState === 'loading' && loadingRecord.responseBody === ''
+      && preview.textContent.includes('[正在读取响应内容…]')
+      && panel.formatRecord(loadingRecord).includes('Response Body Status: [响应尚未读取完成]')
+      && !panel.formatRecord(loadingRecord).includes('[正在读取响应内容…]'),
+      '异步读取期间，复制完整请求标注正文状态而非把界面加载文案写入 Response');
+    finishPending('{"ready":true}', '');
+    await waitFor(() => loadingRecord.responseState === 'ready');
+    check(panel.formatRecord(loadingRecord).includes('Response:\n{\n  "ready": true\n}'),
+      '异步读取完成后切换为实际正文并正常格式化复制');
+    rows()[beforeSpecial + 2].click();
+    check(Boolean(preview.querySelector('.preview-raw')) && preview.textContent === '[正在读取响应内容…]'
+      && panel.formatRecord(panel.getSelectedRecord()).includes('Response:\n[正在读取响应内容…]'),
+      '接口真实返回同名提示文本时仍按真实正文展示和复制');
+
+    // 4. 超大 JSON 未选中时不触发同步解析，选中后按需解析并判定业务失败，切走释放对象树；切业务规则后自动重判；总正文超预算释放旧非选中记录，单条超预算不连带清旧缓存。
+    const beforeLarge = rows().length;
+    const largePayload = JSON.stringify({ success: true, code: 500, payload: 'x'.repeat(1_200_000) });
+    const origLosslessParse = panel.LosslessJSON.parse;
+    let largeParseCalls = 0;
+    let largeRecord = null;
+    panel.LosslessJSON.parse = function (...args) {
+      largeParseCalls++;
+      return origLosslessParse.apply(this, args);
+    };
+    try {
+      panel.addRequest({
+        ...request('https://example.test/large-unselected', largePayload),
+        request: { url: 'https://example.test/large-unselected', method: 'GET', headers: [], queryString: [] },
+      });
+      check(largeParseCalls === 0, '超过 1 MiB 的未选中 JSON 响应不在采集回调中同步解析');
+      await waitFor(() => rows().length === beforeLarge + 1);
+      const largeRecordId = Number(rows()[rows().length - 1].dataset.recordId);
+      const largeRowEl = () => doc.querySelector(`.request-row[data-record-id="${largeRecordId}"]`);
+      await waitFor(() => largeRowEl()?.classList.contains('business-failed'));
+      check(largeParseCalls === 1, '未选中大 JSON 在后台异步完成业务失败判定');
+      panel.selectRecord(largeRecordId);
+      largeRecord = panel.getSelectedRecord();
+      check(largeParseCalls === 2 && largeRecord.responseJsonParsed && largeRecord.businessState === 'failure',
+        '选中大响应后按需解析 JSON 展示，并保持业务失败状态');
+      panel.selectRecord(2);
+      check(largeRecord.parsedResponseJson === undefined && !largeRecord.responseJsonParsed,
+        '切离大响应后释放其解析对象树，避免长期占用内存');
+    } finally {
+      panel.LosslessJSON.parse = origLosslessParse;
+    }
+
+    // 切离大响应后修改业务规则为 success 预设：旧失败标记立即失效，并在后台异步重判为成功，无需重新打开该记录。
+    doc.querySelector('#paramFilterBtn').click();
+    doc.querySelector('[data-settings-tab="business"]').click();
+    ruleRoot.querySelector('[data-rule-preset="success"]').click();
+    ruleRoot.querySelector('form').dispatchEvent(new panel.Event('submit', { cancelable: true }));
+    const largeRow = () => doc.querySelector(`.request-row[data-record-id="${largeRecord.id}"]`);
+    check(largeRecord.businessState === 'unknown' && !largeRow().classList.contains('business-failed'),
+      '切换业务规则时立即作废未选中大响应的旧失败标记');
+    await waitFor(() => largeRecord.businessState === 'success');
+    check(largeRecord.businessState === 'success' && !largeRow().classList.contains('business-failed')
+      && largeRecord.parsedResponseJson === undefined,
+      '切换业务规则后在后台重判大响应，且不长期保留其解析对象树');
+    ruleRoot.querySelector('[data-rule-preset="default"]').click();
+    ruleRoot.querySelector('form').dispatchEvent(new panel.Event('submit', { cancelable: true }));
+    await waitFor(() => largeRecord.businessState === 'failure');
+    doc.querySelector('#settingsCloseBtn').click();
+
+    const bigChunk = 'b'.repeat(6 * 1024 * 1024);
+    const budgetStartCount = rows().length;
+    for (let i = 0; i < 5; i++) {
+      panel.addRequest({
+        _resourceType: 'fetch', startedDateTime: new Date().toISOString(), time: 10,
+        request: { url: `https://example.test/budget-${i}`, method: 'GET', headers: [], queryString: [] },
+        response: { status: 200, statusText: 'OK', headers: [], content: { mimeType: 'text/plain' } },
+        getContent: done => done(bigChunk, ''),
+      });
+    }
+    await waitFor(() => rows().length === budgetStartCount + 5);
+    check(panel.getSelectedRecord().responseState === 'ready', '触发正文容量淘汰时保留当前选中记录正文');
+    rows()[budgetStartCount].click();
+    const evictedRecord = panel.getSelectedRecord();
+    check(evictedRecord.url === 'https://example.test/budget-0'
+      && evictedRecord.responseState === 'evicted' && evictedRecord.responseBody === ''
+      && preview.textContent.includes('超出缓存容量已释放')
+      && panel.formatRecord(evictedRecord).includes('Response Body Status:'),
+      '正文总容量超 24 MiB 预算时优先释放最早非选中记录正文，预览与复制明确标注已释放');
+    rows()[budgetStartCount + 4].click();
+    check(panel.getSelectedRecord().responseState === 'ready', '预算范围内的最新记录正文保持完整可用');
+
+    // 单条超过 24 MiB 预算的新响应只淘汰自身，不能连带清掉之前已缓存的旧正文。
+    panel.selectRecord(2);
+    const oversizedChunk = 'z'.repeat(25 * 1024 * 1024);
+    const beforeOversized = rows().length;
+    panel.addRequest({
+      _resourceType: 'fetch', startedDateTime: new Date().toISOString(), time: 10,
+      request: { url: 'https://example.test/budget-oversized', method: 'GET', headers: [], queryString: [] },
+      response: { status: 200, statusText: 'OK', headers: [], content: { mimeType: 'text/plain' } },
+      getContent: done => done(oversizedChunk, ''),
+    });
+    await waitFor(() => rows().length === beforeOversized + 1);
+    rows()[beforeOversized].click();
+    check(panel.getSelectedRecord().responseState === 'evicted' && panel.getSelectedRecord().responseBody === '',
+      '单条超过 24 MiB 预算的未选中响应直接释放自身正文');
+    rows()[budgetStartCount + 3].click();
+    const keptOldA = panel.getSelectedRecord().responseState;
+    rows()[budgetStartCount + 4].click();
+    const keptOldB = panel.getSelectedRecord().responseState;
+    check(keptOldA === 'ready' && keptOldB === 'ready',
+      '单条超预算响应不会连带清掉已缓存的旧正文');
+
     panel.selectRecord(2);
     const presetRequestCount=rows().length;
     panel.addRequest(request('https://example.test/business-preset','{"success":false,"errorCode":"11021"}'));

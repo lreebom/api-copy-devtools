@@ -51,6 +51,7 @@
 .path-prefix-input { max-width: 100%; }
 .setting-checkbox { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; font-size: 12px; }
 .setting-checkbox input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.duplicate-window-field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
 .param-filter-help { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .param-filter-help code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 .settings-footer { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border-soft); }

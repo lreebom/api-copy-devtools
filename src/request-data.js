@@ -25,15 +25,107 @@ globalThis.ApiCopyRequestData = (() => {
     return result;
   }
 
-  function tryPretty(text, mimeType = '') {
+  // 仅根据响应类型或首字符判断是否值得尝试按 JSON 解析，避免纯文本和大文件无谓进入解析器。
+  function looksLikeJson(text, mimeType = '') {
+    if (typeof text !== 'string') return false;
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    return String(mimeType || '').toLowerCase().includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[');
+  }
+
+  // 区分常见二进制媒体/下载类型，避免把图片、PDF、压缩包等字节流硬解成 UTF-8 乱码。
+  function isBinaryMimeType(mimeType = '') {
+    const type = String(mimeType || '').split(';', 1)[0].trim().toLowerCase();
+    if (!type) return false;
+    if (type.startsWith('text/') || type.includes('json') || type.includes('xml')
+      || type.includes('javascript') || type.includes('ecmascript')
+      || type === 'application/x-www-form-urlencoded' || type === 'application/graphql') {
+      return false;
+    }
+    return type.startsWith('image/') || type.startsWith('audio/') || type.startsWith('video/')
+      || type.startsWith('font/') || type.startsWith('application/vnd.')
+      || type === 'application/octet-stream' || type === 'application/pdf'
+      || type === 'application/zip' || type === 'application/gzip' || type === 'application/x-gzip'
+      || type === 'application/x-tar' || type === 'application/x-7z-compressed'
+      || type === 'application/x-rar-compressed' || type === 'application/wasm'
+      || type === 'application/msword' || type === 'application/protobuf'
+      || type === 'application/x-protobuf' || type === 'application/grpc';
+  }
+
+  // 按 UTF-8 计算字符串真实字节数，与 Base64 字节口径一致且不分配整段拷贝缓冲。
+  function utf8ByteLength(text) {
+    let bytes = 0;
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      if (code < 0x80) {
+        bytes += 1;
+      } else if (code < 0x800) {
+        bytes += 2;
+      } else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+        const next = text.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          bytes += 4;
+          i++;
+        } else {
+          bytes += 3;
+        }
+      } else {
+        bytes += 3;
+      }
+    }
+    return bytes;
+  }
+
+  // 解码响应正文并明确区分空正文、可读文本、二进制与解码失败，不再把提示文案混入正文。
+  function decodeResponseContent(content, encoding = '', mimeType = '') {
+    if (content == null || content === '') {
+      return { state: 'empty', text: '', byteLength: 0 };
+    }
+
+    if (encoding !== 'base64') {
+      const text = String(content);
+      const byteLength = utf8ByteLength(text);
+      if (isBinaryMimeType(mimeType) || text.includes('\0')) {
+        return { state: 'binary', text: '', byteLength };
+      }
+      return { state: 'ready', text, byteLength };
+    }
+
+    let binary;
+    try {
+      binary = atob(content);
+    } catch {
+      return { state: 'decode_error', text: '', byteLength: 0 };
+    }
+
+    const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
+    if (isBinaryMimeType(mimeType)) {
+      return { state: 'binary', text: '', byteLength: bytes.byteLength };
+    }
+
+    // 未声明二进制类型时做严格 UTF-8 校验，发现非法字节或 NUL 字符则按二进制处理。
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      if (text.includes('\0')) return { state: 'binary', text: '', byteLength: bytes.byteLength };
+      return { state: 'ready', text, byteLength: bytes.byteLength };
+    } catch {
+      return { state: 'binary', text: '', byteLength: bytes.byteLength };
+    }
+  }
+
+  // 复制响应时复用采集阶段解析的无损 JSON。
+  function tryPretty(text, mimeType = '', parsedJson = undefined) {
     if (text == null || text === '') return '';
     if (typeof text !== 'string') return LosslessJSON.stringify(text, null, 2);
 
     const trimmed = text.trim();
     if (!trimmed) return '';
 
-    if (mimeType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      try { return LosslessJSON.stringify(parseJsonValue(trimmed), null, 2); } catch {}
+    if (looksLikeJson(trimmed, mimeType)) {
+      try {
+        const value = parsedJson === undefined ? parseJsonValue(trimmed) : parsedJson;
+        return LosslessJSON.stringify(value, null, 2);
+      } catch {}
     }
     return text;
   }
@@ -67,11 +159,7 @@ globalThis.ApiCopyRequestData = (() => {
 
     if (Array.isArray(postData.params)) {
       // 字段列表保留同名参数、原始顺序和文件元数据，避免转为对象后相互覆盖。
-      return formatFormDataItems(postData.params.map(param => createFormDataItem({
-        ...param,
-        name: decodeUrlComponent(param.name),
-        value: decodeUrlComponent(param.value),
-      })));
+      return formatFormDataItems(postData.params.map(createFormDataItem));
     }
     return '';
   }
@@ -141,28 +229,17 @@ globalThis.ApiCopyRequestData = (() => {
     const postData = record?.postData;
     if (!postData) return null;
     const mimeType = postData.mimeType || '';
-    // 只有 HAR 字段时保留原值，避免在展示或重建 cURL 时误解码字面百分号。
-    if (!mimeType && !postData.text && Array.isArray(postData.params)) {
+    const hasParamsOnly = !mimeType && !postData.text && Array.isArray(postData.params);
+    if (!isFormDataMimeType(mimeType) && !hasParamsOnly) return null;
+
+    // 仅对 URL 编码的原始正文解码。HAR params 已按字段拆分，保留字面百分号和加号。
+    if (postData.text && mimeType.toLowerCase().includes('application/x-www-form-urlencoded')) {
+      return parseUrlEncodedFormData(postData.text);
+    }
+    if (Array.isArray(postData.params) && postData.params.length) {
       return postData.params.map(createFormDataItem);
     }
-    if (!isFormDataMimeType(mimeType)) return null;
-
-    if (Array.isArray(postData.params) && postData.params.length) {
-      if (postData.text && mimeType.toLowerCase().includes('application/x-www-form-urlencoded')) {
-        return parseUrlEncodedFormData(postData.text);
-      }
-      // HAR 字段可能已经解码；加号在这里是实际内容，不能再按表单空格转换。
-      return postData.params.map(param => createFormDataItem({
-        ...param, name: decodeUrlComponent(param.name), value: decodeUrlComponent(param.value),
-      }));
-    }
-
-    const text = postData.text || '';
-    if (!text) return [];
-    if (mimeType.toLowerCase().includes('application/x-www-form-urlencoded')) {
-      return parseUrlEncodedFormData(text);
-    }
-    return parseMultipartFormData(text, mimeType);
+    return postData.text ? parseMultipartFormData(postData.text, mimeType) : [];
   }
 
   function getRequestBodyValue(record) {
@@ -291,5 +368,95 @@ globalThis.ApiCopyRequestData = (() => {
     return hasFiles ? '# Replace /path/to/ with your local file paths before running.\n' + command : command;
   }
 
-  return { normalizeResourceType, isFetchXhrType, headersToObject, tryPretty, getResponseJson, getRequestBody, isFormDataMimeType, createFormDataItem, formatFileSize, parseUrlEncodedFormData, parseMultipartFormData, getFormDataItems, getRequestBodyValue, decodeUrlComponent, decodeUrlPath, formatReadableSearch, getTokenFromRecord, formatCurl };
+  // 生成请求体指纹用于识别短时间内的重复请求；文件字段只取元数据，超大正文取头尾和长度。
+  function getRequestBodyFingerprint(record) {
+    if (record && Object.hasOwn(record, 'bodyFingerprint')) return record.bodyFingerprint;
+    const postData = record?.postData;
+    let fingerprint = '';
+    if (postData) {
+      const formItems = getFormDataItems(record);
+      if (formItems !== null) {
+        fingerprint = `form:${formItems.map(item => (
+          item.isFile
+            ? `${item.name}=[file:${item.fileName}:${item.contentType}:${item.fileSize ?? ''}]`
+            : `${item.name}=${item.value}`
+        )).join('\0')}`;
+      } else if (typeof postData.text === 'string' && postData.text.length) {
+        const text = postData.text;
+        fingerprint = text.length > 8192
+          ? `text:${text.length}:${text.slice(0, 4096)}:${text.slice(-4096)}`
+          : `text:${text}`;
+      } else if (Array.isArray(postData.params) && postData.params.length) {
+        fingerprint = `params:${postData.params.map(item => `${item.name || ''}=${item.value ?? ''}`).join('\0')}`;
+      }
+    }
+    if (record) record.bodyFingerprint = fingerprint;
+    return fingerprint;
+  }
+
+  function getDuplicateRequestFingerprint(record, filteredUrl = record?.url || '') {
+    const method = String(record?.method || 'GET').toUpperCase();
+    return `${method}\n${filteredUrl}\n${getRequestBodyFingerprint(record)}`;
+  }
+
+  // 按时间顺序将窗口内连续出现的相同请求归为同一重复组，组内全部请求均标记序号与总数，方便对照查看。
+  function markDuplicateRequests(records, { enabled = true, windowMs = 1000, getFilteredUrl = url => url } = {}) {
+    for (const record of records) {
+      record.duplicateOfId = null;
+      record.duplicateGroupId = null;
+      record.duplicateGapMs = null;
+      record.duplicateIndex = 1;
+      record.duplicateTotal = 1;
+    }
+    if (!enabled || !Number.isFinite(windowMs) || windowMs <= 0) return;
+
+    const ordered = [...records].sort((a, b) => {
+      const aTime = Date.parse(a.startedDateTime);
+      const bTime = Date.parse(b.startedDateTime);
+      const aTs = Number.isFinite(aTime) ? aTime : (a.capturedAt ?? 0);
+      const bTs = Number.isFinite(bTime) ? bTime : (b.capturedAt ?? 0);
+      if (aTs !== bTs) return aTs - bTs;
+      return (a.id ?? 0) - (b.id ?? 0);
+    });
+
+    let nextGroupId = 1;
+    const lastByFingerprint = new Map();
+    for (const record of ordered) {
+      const parsedTime = Date.parse(record.startedDateTime);
+      const timeMs = Number.isFinite(parsedTime) ? parsedTime : (record.capturedAt ?? NaN);
+      const fingerprint = getDuplicateRequestFingerprint(record, getFilteredUrl(record.url));
+      const previous = lastByFingerprint.get(fingerprint);
+      const gapMs = previous && Number.isFinite(timeMs) && Number.isFinite(previous.timeMs)
+        ? timeMs - previous.timeMs
+        : NaN;
+
+      if (previous && Number.isFinite(gapMs) && gapMs >= 0 && gapMs <= windowMs) {
+        if (previous.groupId === null) {
+          previous.groupId = nextGroupId++;
+          previous.members[0].duplicateGroupId = previous.groupId;
+          previous.members[0].duplicateIndex = 1;
+        }
+        previous.members.push(record);
+        record.duplicateOfId = previous.lastId;
+        record.duplicateGroupId = previous.groupId;
+        record.duplicateGapMs = Math.round(gapMs);
+        record.duplicateIndex = previous.members.length;
+        const total = previous.members.length;
+        for (const member of previous.members) {
+          member.duplicateTotal = total;
+        }
+        previous.lastId = record.id;
+        previous.timeMs = timeMs;
+      } else {
+        lastByFingerprint.set(fingerprint, {
+          groupId: null,
+          lastId: record.id,
+          timeMs,
+          members: [record],
+        });
+      }
+    }
+  }
+
+  return { normalizeResourceType, isFetchXhrType, headersToObject, looksLikeJson, isBinaryMimeType, decodeResponseContent, tryPretty, getResponseJson, getRequestBody, isFormDataMimeType, createFormDataItem, formatFileSize, parseUrlEncodedFormData, parseMultipartFormData, getFormDataItems, getRequestBodyValue, decodeUrlComponent, decodeUrlPath, formatReadableSearch, getTokenFromRecord, formatCurl, getRequestBodyFingerprint, getDuplicateRequestFingerprint, markDuplicateRequests };
 })();
