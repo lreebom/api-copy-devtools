@@ -47,6 +47,10 @@ API Copy 是一个面向接口联调和问题排查的 Chrome DevTools 扩展。
   - 长字符串自动收缩，可通过字段按钮或双击展开 / 收起
 - 支持自动、左右和上下三种面板布局，并分别记住布局模式和拖拽尺寸；双击分隔线恢复主面板 40% / 60%、列表与参数 65% / 35% 的默认比例。
 
+## 从浏览器商店安装
+
+[Chrome 应用商店](https://chromewebstore.google.com/detail/lpfejkaolbpnmggaoghkpkfafjdmcfhb) · [Microsoft Edge 加载项](https://microsoftedge.microsoft.com/addons/detail/fanjhflkpmlbkbgbkadjopbhjfplagjj)
+
 ## 安装开发版
 
 1. Clone 或下载本仓库。

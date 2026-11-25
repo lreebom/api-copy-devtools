@@ -48,6 +48,10 @@ In the Network panel, reviewing a full request often means opening requests one 
   - Collapses long strings and supports expand / collapse through a field action or double-click
 - Automatic, side-by-side, and stacked panel layouts, with remembered mode and draggable sizing. Double-click splitters to restore the main 40% / 60% and list/parameters 65% / 35% proportions.
 
+## Install from a Browser Store
+
+[Chrome Web Store](https://chromewebstore.google.com/detail/lpfejkaolbpnmggaoghkpkfafjdmcfhb) · [Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/fanjhflkpmlbkbgbkadjopbhjfplagjj)
+
 ## Install for Development
 
 1. Clone or download this repository.
