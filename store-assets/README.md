@@ -1,6 +1,6 @@
 # Chrome / Edge 商店发布材料
 
-当前安装包为 `../dist/api-copy-devtools-v0.5.3.zip`，由 `scripts/package.sh` 生成。商店材料不进入扩展安装包。
+当前安装包为 `../dist/api-copy-devtools-v0.6.0.zip`，由 `scripts/package.sh` 生成。商店材料不进入扩展安装包。
 
 - `RELEASE_NOTES.md`：中英文更新说明，可复制到商店更新说明栏。
 - `STORE_LISTING.zh-CN.md`：简体中文商品详情。

@@ -1,3 +1,29 @@
+# API Copy 0.6.0
+
+更新日期为 2026-11-23。
+
+## 简体中文
+
+- 新增重复请求警告，支持调整判定间隔、筛选重复组和联动高亮。文件内容缺失的匹配上传显示「可能重复」。
+- 保留并发同地址请求，区分二进制和正文读取状态，优化大响应的解析、缓存和复制。
+- 优化明暗主题及窄面板布局。展开长文本时完整显示字段名，Tab 可直达选中行的复制按钮。
+- 预览标题显示复制目标及筛选外提示，并分别标明 HTTP 状态和业务失败。设置和帮助使用轻遮罩。
+- 同一页面内修改 Query、Hash 或切换路由时，保留接口记录和当前预览。
+- 提前显示进行中的请求，完成后原位回填响应。排序和筛选保留请求的时间序号。
+- 全局路径前缀截断默认改为 0 段，保留完整路径。
+
+## English
+
+- Add duplicate request warnings with a configurable interval, a group filter, and peer highlighting. Matching uploads with incomplete file contents are marked as possible duplicates.
+- Keep concurrent requests separate, label binary responses and body availability, and improve large-response parsing, caching, and copying.
+- Refine light and dark themes and narrow layouts. Keep field names visible when expanding long JSON strings, and focus the selected row's copy buttons with Tab.
+- Show the copy target in Preview, flag filtered-out requests, and distinguish HTTP status from business failures. Use a light overlay for Settings and Help.
+- Preserve requests and the active preview when the query, hash, or route changes within the same document.
+- Show pending requests and update their rows on completion. Keep the start-time numbers when sorting or filtering.
+- Keep the full path by default with global path prefix trimming set to 0 segments.
+
+---
+
 # API Copy 0.5.3
 
 更新日期为 2026-11-20。

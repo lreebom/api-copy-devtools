@@ -193,7 +193,7 @@ globalThis.ApiCopyRequestData = (() => {
   }
 
   // 只识别完整的 multipart 分隔行，解析不完整时返回 null 以保留原始正文。
-  function parseMultipartFormData(text, mimeType) {
+  function parseMultipartFormData(text, mimeType, { includeFileContent = false } = {}) {
     const boundaryMatch = /(?:^|;)\s*boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))/i.exec(mimeType);
     const boundary = boundaryMatch?.[1] || boundaryMatch?.[2];
     if (!boundary) return null;
@@ -218,9 +218,16 @@ globalThis.ApiCopyRequestData = (() => {
       const disposition = /content-disposition:\s*form-data;([^\r\n]+)/i.exec(headers)?.[1] || '';
       const name = /(?:^|;)\s*name="([^"]*)"/i.exec(disposition);
       if (!name) return null;
-      const fileName = /(?:^|;)\s*filename="([^"]*)"/i.exec(disposition)?.[1] || '';
+      const filenameParameter = /(?:^|;)\s*filename="([^"]*)"/i.exec(disposition);
+      const fileName = filenameParameter?.[1] || '';
       const contentType = /content-type:\s*([^\r\n]+)/i.exec(headers)?.[1]?.trim() || '';
-      fields.push(createFormDataItem({ name: name[1], value: fileName ? '' : content, fileName, contentType }));
+      const item = createFormDataItem({ name: name[1], value: fileName ? '' : content, fileName, contentType });
+      if (includeFileContent && filenameParameter) {
+        item.isFile = true;
+        // DevTools 可能只保留文件头，空内容不足以判断两个文件相同。
+        item.fileContent = content || null;
+      }
+      fields.push(item);
     }
     return null;
   }
@@ -368,29 +375,40 @@ globalThis.ApiCopyRequestData = (() => {
     return hasFiles ? '# Replace /path/to/ with your local file paths before running.\n' + command : command;
   }
 
-  // 生成请求体指纹用于识别短时间内的重复请求；文件字段只取元数据，超大正文取头尾和长度。
+  // 表单按字段序列化。上传文件用原文比较，内容缺失或不完整时只能判断为可能重复。
   function getRequestBodyFingerprint(record) {
     if (record && Object.hasOwn(record, 'bodyFingerprint')) return record.bodyFingerprint;
     const postData = record?.postData;
     let fingerprint = '';
+    let incomplete = false;
     if (postData) {
-      const formItems = getFormDataItems(record);
+      const mimeType = postData.mimeType || '';
+      const isMultipart = mimeType.toLowerCase().includes('multipart/form-data');
+      const rawMultipart = isMultipart && postData.text
+        ? parseMultipartFormData(postData.text, mimeType, { includeFileContent: true })
+        : null;
+      const formItems = rawMultipart ?? getFormDataItems(record);
       if (formItems !== null) {
-        fingerprint = `form:${formItems.map(item => (
-          item.isFile
-            ? `${item.name}=[file:${item.fileName}:${item.contentType}:${item.fileSize ?? ''}]`
-            : `${item.name}=${item.value}`
-        )).join('\0')}`;
+        incomplete = isMultipart && rawMultipart === null && (Boolean(postData.text) || !formItems.length);
+        const fields = formItems.map(item => {
+          if (!item.isFile) return [0, item.name, item.value];
+          const content = item.fileContent ?? null;
+          if (content === null || content.includes('\uFFFD')) incomplete = true;
+          return [1, item.name, item.fileName, item.contentType, item.fileSize, content];
+        });
+        fingerprint = JSON.stringify(['form', fields]);
       } else if (typeof postData.text === 'string' && postData.text.length) {
-        const text = postData.text;
-        fingerprint = text.length > 8192
-          ? `text:${text.length}:${text.slice(0, 4096)}:${text.slice(-4096)}`
-          : `text:${text}`;
+        fingerprint = `text:${postData.text}`;
+        incomplete = isMultipart;
       } else if (Array.isArray(postData.params) && postData.params.length) {
-        fingerprint = `params:${postData.params.map(item => `${item.name || ''}=${item.value ?? ''}`).join('\0')}`;
+        fingerprint = JSON.stringify(['params', postData.params.map(item => [item.name || '', item.value ?? ''])]);
       }
     }
-    if (record) record.bodyFingerprint = fingerprint;
+    if (incomplete) fingerprint = `partial:${fingerprint}`;
+    if (record) {
+      record.bodyFingerprint = fingerprint;
+      record.bodyFingerprintIncomplete = incomplete;
+    }
     return fingerprint;
   }
 
@@ -399,7 +417,17 @@ globalThis.ApiCopyRequestData = (() => {
     return `${method}\n${filteredUrl}\n${getRequestBodyFingerprint(record)}`;
   }
 
-  // 按时间顺序将窗口内连续出现的相同请求归为同一重复组，组内全部请求均标记序号与总数，方便对照查看。
+  // 开始时间缺失时逐条回退，保证列表与重复组使用同一个时间顺序。
+  function getRequestStartTime(record) {
+    const time = Date.parse(record.startedDateTime);
+    return Number.isFinite(time) ? time : (record.capturedAt ?? NaN);
+  }
+
+  function compareRequestStartTime(a, b) {
+    return (getRequestStartTime(a) || 0) - (getRequestStartTime(b) || 0) || (a.id ?? 0) - (b.id ?? 0);
+  }
+
+  // 按时间顺序将窗口内连续出现的相同请求归为同一重复组，分组结束后按组一次写入总数，保持线性耗时。
   function markDuplicateRequests(records, { enabled = true, windowMs = 1000, getFilteredUrl = url => url } = {}) {
     for (const record of records) {
       record.duplicateOfId = null;
@@ -410,20 +438,13 @@ globalThis.ApiCopyRequestData = (() => {
     }
     if (!enabled || !Number.isFinite(windowMs) || windowMs <= 0) return;
 
-    const ordered = [...records].sort((a, b) => {
-      const aTime = Date.parse(a.startedDateTime);
-      const bTime = Date.parse(b.startedDateTime);
-      const aTs = Number.isFinite(aTime) ? aTime : (a.capturedAt ?? 0);
-      const bTs = Number.isFinite(bTime) ? bTime : (b.capturedAt ?? 0);
-      if (aTs !== bTs) return aTs - bTs;
-      return (a.id ?? 0) - (b.id ?? 0);
-    });
+    const ordered = [...records].sort(compareRequestStartTime);
 
     let nextGroupId = 1;
+    const groups = [];
     const lastByFingerprint = new Map();
     for (const record of ordered) {
-      const parsedTime = Date.parse(record.startedDateTime);
-      const timeMs = Number.isFinite(parsedTime) ? parsedTime : (record.capturedAt ?? NaN);
+      const timeMs = getRequestStartTime(record);
       const fingerprint = getDuplicateRequestFingerprint(record, getFilteredUrl(record.url));
       const previous = lastByFingerprint.get(fingerprint);
       const gapMs = previous && Number.isFinite(timeMs) && Number.isFinite(previous.timeMs)
@@ -435,16 +456,13 @@ globalThis.ApiCopyRequestData = (() => {
           previous.groupId = nextGroupId++;
           previous.members[0].duplicateGroupId = previous.groupId;
           previous.members[0].duplicateIndex = 1;
+          groups.push(previous.members);
         }
         previous.members.push(record);
         record.duplicateOfId = previous.lastId;
         record.duplicateGroupId = previous.groupId;
         record.duplicateGapMs = Math.round(gapMs);
         record.duplicateIndex = previous.members.length;
-        const total = previous.members.length;
-        for (const member of previous.members) {
-          member.duplicateTotal = total;
-        }
         previous.lastId = record.id;
         previous.timeMs = timeMs;
       } else {
@@ -456,7 +474,14 @@ globalThis.ApiCopyRequestData = (() => {
         });
       }
     }
+
+    for (const members of groups) {
+      const total = members.length;
+      for (const member of members) {
+        member.duplicateTotal = total;
+      }
+    }
   }
 
-  return { normalizeResourceType, isFetchXhrType, headersToObject, looksLikeJson, isBinaryMimeType, decodeResponseContent, tryPretty, getResponseJson, getRequestBody, isFormDataMimeType, createFormDataItem, formatFileSize, parseUrlEncodedFormData, parseMultipartFormData, getFormDataItems, getRequestBodyValue, decodeUrlComponent, decodeUrlPath, formatReadableSearch, getTokenFromRecord, formatCurl, getRequestBodyFingerprint, getDuplicateRequestFingerprint, markDuplicateRequests };
+  return { normalizeResourceType, isFetchXhrType, headersToObject, looksLikeJson, isBinaryMimeType, decodeResponseContent, tryPretty, getResponseJson, getRequestBody, isFormDataMimeType, createFormDataItem, formatFileSize, parseUrlEncodedFormData, parseMultipartFormData, getFormDataItems, getRequestBodyValue, decodeUrlComponent, decodeUrlPath, formatReadableSearch, getTokenFromRecord, formatCurl, getRequestBodyFingerprint, getDuplicateRequestFingerprint, compareRequestStartTime, markDuplicateRequests };
 })();

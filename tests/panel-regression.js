@@ -31,6 +31,21 @@ frame.addEventListener('load', async () => {
     let copied='';
     Object.defineProperty(panel.navigator,'clipboard',{configurable:true,value:{writeText:async text=>{copied=text;}}});
     panel.selectRecord(7);
+    const prefixInput = doc.querySelector('#pathPrefixSegmentsInput');
+    panel.localStorage.removeItem('apiCopyPathPrefixSegments');
+    check(panel.loadPathPrefixSegments() === 0, '首次使用默认截断 0 段');
+    doc.querySelector('#resetIgnoredParamsBtn').click();
+    const fullPath = new URL(panel.getSelectedRecord().url).pathname;
+    doc.querySelector('#copyPathBtn').click();
+    await Promise.resolve();
+    check(prefixInput.value === '0' && panel.localStorage.getItem('apiCopyPathPrefixSegments') === '0'
+      && doc.querySelector('.request-row[data-record-id="7"] .url').textContent === fullPath && copied === fullPath,
+      '恢复默认后记录 0，列表和复制路径均保留完整前缀');
+    // 其余路径用例显式设置截断 3 段，继续覆盖截断后的复制与搜索。
+    prefixInput.value = '3';
+    prefixInput.dispatchEvent(new panel.Event('input'));
+    check(panel.localStorage.getItem('apiCopyPathPrefixSegments') === '3' && panel.loadPathPrefixSegments() === 3,
+      '用户修改前缀截断后立即保存，启动优先读取用户值');
     const params = doc.querySelector('#requestParamsContent');
     check(params.querySelectorAll('.request-param-title').length===1
       && params.querySelector('.request-param-title').textContent.includes('Query')
@@ -88,14 +103,16 @@ frame.addEventListener('load', async () => {
     const sortParams=params.firstElementChild;
     requestSort.click();
     check([...rows()].map(row=>row.dataset.recordId).join(',')===[...originalOrder].reverse().join(',')
-      && [...rows()].every((row,index)=>row.querySelector('.request-index').textContent===String(index+1))
+      && [...rows()].every((row,index)=>row.querySelector('.request-index').textContent===String(originalOrder.length-index))
       && panel.getSelectedRecord().id===7 && doc.querySelector('#previewContent').firstElementChild===sortPreview
       && params.firstElementChild===sortParams && doc.querySelector('#previewContent details[data-json-path="/data/items"]').open,
-      '切换倒序只重排列表与序号，保持选中接口、参数和 JSON 展开状态');
+      '切换倒序保留同一请求的序号、选中接口、参数和 JSON 展开状态');
     check(panel.localStorage.getItem('apiCopyRequestSortOrder')==='newest'
       && requestSort.title.includes('当前：最新请求在前'), '倒序偏好持久化且按钮提示当前方向');
     doc.querySelector('[data-method="GET"]').click();
-    check([...rows()].map(row=>row.dataset.recordId).join(',')==='7,6,1', '筛选结果沿用最新请求在前的顺序');
+    check([...rows()].map(row=>row.dataset.recordId).join(',')==='7,6,1'
+      && [...rows()].every(row=>row.querySelector('.request-index').textContent===String(originalOrder.indexOf(row.dataset.recordId)+1)),
+      '筛选结果沿用倒序且保留按时间计算的序号');
     doc.querySelector('[data-method="all"]').click();
     requestSort.click();
     check([...rows()].map(row=>row.dataset.recordId).join(',')===originalOrder.join(','), '再次点击恢复正序');
@@ -110,10 +127,12 @@ frame.addEventListener('load', async () => {
     }
     doc.querySelector('[data-method="POST"]').click();
     check(rows().length === 0, 'URL 搜索与请求方法筛选同时生效');
+    const filteredOut = doc.querySelector('#detailFilteredOut');
+    check(!filteredOut.hidden && doc.querySelector('#detailRequestTarget').textContent === `GET ${displayPath}`,
+      '筛选结果为空时仍显示原复制目标及当前筛选外提示');
     doc.querySelector('[data-method="all"]').click();
     doc.querySelector('#filterClearBtn').click();
-    check(rows().length === 10, '清空请求筛选后恢复列表');
-    const prefixInput = doc.querySelector('#pathPrefixSegmentsInput');
+    check(rows().length === 10 && filteredOut.hidden, '清空请求筛选后恢复列表并移除筛选外提示');
     const queryToggle = doc.querySelector('#showUrlQueryInput');
     const savedPrefix = prefixInput.value;
     const savedShowQuery = queryToggle.checked;
@@ -292,6 +311,8 @@ frame.addEventListener('load', async () => {
     check(longLine.querySelector('.json-field-actions').getBoundingClientRect().top===longLine.getBoundingClientRect().top
       && longLine.querySelector('.json-long-value').getBoundingClientRect().top>longLine.getBoundingClientRect().top,
       '长文本展开后操作跟随字段名，完整文本独占下一行');
+    const expandedKey = longLine.querySelector('.json-key');
+    check(expandedKey.scrollWidth <= expandedKey.clientWidth, '长文本展开后完整展示字段名');
     panel.selectRecord(1);panel.selectRecord(2);
     check(doc.querySelector('#previewContent .json-long-value').classList.contains('expanded'), '切换请求后保留长文本展开状态');
     panel.selectRecord(1);
@@ -330,14 +351,73 @@ frame.addEventListener('load', async () => {
       && panel.getSelectedRecord().id===1 && preview.firstElementChild===descendingPreview,
       '倒序新增请求按开始时间插入，延迟到达的旧请求不置顶且当前 JSON 不刷新');
     check(descendingRows.every(row=>row.isConnected) && doc.activeElement===focusedCopyButton
-      && [...rows()].every((row,index)=>row.querySelector('.request-index').textContent===String(index+1)),
-      '倒序插入请求只调整现有行的序号，保留节点和复制按钮焦点');
+      && [...rows()].every((row,index)=>row.querySelector('.request-index').textContent===String(rows().length-index)),
+      '晚到请求按时间插入，保留节点和复制按钮焦点');
     requestSort.click();
+    const missingStart = panel.recordsInDisplayOrder([
+      { id: 1, startedDateTime: '2026-01-01T00:00:02Z' },
+      { id: 2, startedDateTime: '', capturedAt: Date.parse('2026-01-01T00:00:03Z') },
+      { id: 3, startedDateTime: '2026-01-01T00:00:01Z' },
+    ]);
+    check(missingStart.map(record=>record.id).join(',') === '3,1,2', '缺少开始时间时逐条回退到采集时间，仍能按时间排序');
     panel.addRequest(request('https://example.test/d','{}',true));
     panel.clearRequestRecords('已清空');
     callback('{"data":"old"}','');
     await new Promise(resolve=>panel.requestAnimationFrame(resolve));
     check(rows().length === 0 && !preview.textContent.includes('old'), '清空后旧请求异步返回不会污染新会话');
+    check(doc.querySelector('#detailRequest').hidden && doc.querySelector('#detailMeta').hidden
+      && !doc.querySelector('#detailPlaceholder').hidden && doc.querySelector('#copyPathBtn').disabled,
+      '清空后移除预览复制目标和响应状态');
+
+    // 模拟 DevTools 回调，控制主文档检查与请求完成的先后顺序。
+    let requestFinished;
+    let pageNavigated;
+    const documentChecks = [];
+    panel.startDevToolsCapture({
+      network: {
+        onRequestFinished: { addListener: listener => { requestFinished = listener; } },
+        onNavigated: { addListener: listener => { pageNavigated = listener; } },
+      },
+      inspectedWindow: { eval: (expression, done) => {
+        if (expression !== 'performance.timeOrigin') throw new Error('应读取主文档的时间原点');
+        documentChecks.push(done);
+      } },
+    });
+    documentChecks.shift()(100);
+    requestFinished(request('https://example.test/old-document', '{"data":{"label":"old"}}'));
+    requestFinished(request('https://example.test/old-response', '{}', true));
+    const oldResponse = callback;
+    await waitFor(() => rows().length === 2);
+    panel.selectRecord(1);
+    const beforeNavigationTree = preview.firstElementChild;
+    for (const url of ['https://example.test/?page=2', 'https://example.test/?page=2#details', 'https://example.test/list']) {
+      pageNavigated(url);
+      documentChecks.shift()(100);
+    }
+    check(rows().length === 2 && panel.getSelectedRecord().id === 1 && preview.firstElementChild === beforeNavigationTree,
+      '同一主文档切换 Query、Hash 和站内路由时保留请求列表和当前 JSON');
+
+    pageNavigated('https://example.test/list');
+    requestFinished(request('https://example.test/new-response', '{}', true));
+    const newResponse = callback;
+    pageNavigated('https://example.test/list?ready=1');
+    documentChecks.pop()(200);
+    documentChecks.shift()(100);
+    oldResponse('{"data":"stale"}', '');
+    check(rows().length === 1 && rows()[0].querySelector('.url').textContent === '/new-response'
+      && panel.getSelectedRecord() === null, '真正刷新只清除旧记录，延迟或乱序导航回调不会删除新请求');
+    newResponse('{"data":"new"}', '');
+    panel.selectRecord(Number(rows()[0].dataset.recordId));
+    check(preview.textContent.includes('"new"') && !preview.textContent.includes('stale'), '导航期间捕获的新请求继续读取正文');
+
+    pageNavigated('https://example.test/list#blocked');
+    documentChecks.shift()(undefined, { isError: true });
+    pageNavigated('https://example.test/list#available');
+    documentChecks.shift()(300);
+    check(rows().length === 1 && preview.textContent.includes('"new"'), '文档检查失败时保留记录，恢复后重新建立比较基准');
+    doc.querySelector('#clearBtn').click();
+    check(rows().length === 0 && panel.getSelectedRecord() === null, '清空记录按钮仍可主动清除全部请求');
+
     // 新功能使用真实控件事件，验证筛选、保存规则与复制不会重建当前 JSON。
     const quick = doc.querySelector('#requestQuickFilters');
     const clickFilter = selector => quick.querySelector(selector).click();
@@ -346,11 +426,25 @@ frame.addEventListener('load', async () => {
     panel.addRequest(request('https://example.test/business','{"data":{"ok":1,"status":"SUCCESS"}}'));
     panel.addRequest({...request('https://example.test/slow','{"code":409}'),time:2000});
     await waitFor(()=>rows().length===3);
+    const detailHttpStatus = doc.querySelector('#detailHttpStatus');
+    const detailBusinessStatus = doc.querySelector('#detailBusinessStatus');
+    panel.selectRecord(1);
+    const errorColor = panel.getComputedStyle(rows()[0].querySelector('.status')).color;
+    check(detailHttpStatus.textContent === 'HTTP 500' && panel.getComputedStyle(detailHttpStatus).color === errorColor
+      && detailBusinessStatus.hidden, 'HTTP 500 独立显示失败色');
+    panel.selectRecord(3);
+    check(detailHttpStatus.textContent.startsWith('HTTP 200') && panel.getComputedStyle(detailHttpStatus).color !== errorColor
+      && !detailBusinessStatus.hidden && detailBusinessStatus.textContent.includes('code=409')
+      && panel.getComputedStyle(detailBusinessStatus).color === errorColor
+      && doc.querySelector('#detailResponseInfo').textContent.includes('2000 ms'), '业务失败单独标色，并保留失败原因和耗时');
     panel.selectRecord(2);
     const selectedTree = preview.firstElementChild;
     clickFilter('[data-method="GET"]');
     check(rows().length === 1 && rows()[0].querySelector('.method').textContent === 'GET', '方法快捷筛选生效');
-    check(preview.firstElementChild === selectedTree, '筛选不会打断正在阅读的 JSON');
+    doc.querySelector('#copyPathBtn').click();
+    await Promise.resolve();
+    check(preview.firstElementChild === selectedTree && !filteredOut.hidden && copied === '/business',
+      '方法筛选保留当前 JSON，提示原请求在筛选外且复制仍对应原路径');
     clickFilter('[data-method="all"]');
     clickFilter('[data-filter="httpFailure"]');
     check(rows().length===1, 'HTTP 失败独立筛选');
@@ -668,6 +762,89 @@ frame.addEventListener('load', async () => {
     dupWindow.value = '1000';
     dupWindow.dispatchEvent(new panel.Event('input'));
 
+    // 过滤忽略 Query 后 %20 与 + 编码统一比较，不漏报重复。
+    const beforeSpaceDup = rows().length;
+    panel.addRequest({
+      ...request('https://example.test/dup-space?q=A%20B&_t=1', '{"ok":1}'),
+      startedDateTime: dupIso(0),
+      request: { url: 'https://example.test/dup-space?q=A%20B&_t=1', method: 'GET', headers: [], queryString: [] },
+    });
+    panel.addRequest({
+      ...request('https://example.test/dup-space?q=A%20B', '{"ok":1}'),
+      startedDateTime: dupIso(120),
+      request: { url: 'https://example.test/dup-space?q=A%20B', method: 'GET', headers: [], queryString: [] },
+    });
+    await waitFor(() => rows().length === beforeSpaceDup + 2);
+    const spaceDupRows = [...rows()].filter(row => row.textContent.includes('/dup-space'));
+    check(spaceDupRows.length === 2
+      && spaceDupRows[0].querySelector('.duplicate-warn-badge')?.textContent === '重复 1/2'
+      && spaceDupRows[1].querySelector('.duplicate-warn-badge')?.textContent === '重复 2/2',
+      '过滤 _t 后含 %20 空格的 Query 仍与无 _t 请求识别为同一重复组');
+
+    // 新请求加入已有重复组时原位更新徽标，不替换行 DOM、不打断按钮焦点，且同步更新 Preview 状态栏。
+    const beforeInPlace = rows().length;
+    panel.addRequest({
+      ...request('https://example.test/dup-inplace', '{"ok":1}'),
+      startedDateTime: dupIso(0),
+      request: { url: 'https://example.test/dup-inplace', method: 'GET', headers: [], queryString: [] },
+    });
+    panel.addRequest({
+      ...request('https://example.test/dup-inplace', '{"ok":1}'),
+      startedDateTime: dupIso(100),
+      request: { url: 'https://example.test/dup-inplace', method: 'GET', headers: [], queryString: [] },
+    });
+    await waitFor(() => rows().length === beforeInPlace + 2);
+    const inPlaceRows = () => [...rows()].filter(row => row.textContent.includes('/dup-inplace'));
+    const firstInPlaceRow = inPlaceRows()[0];
+    firstInPlaceRow.click();
+    const focusedCopyBtn = firstInPlaceRow.querySelector('.row-copy-path');
+    focusedCopyBtn.focus({ preventScroll: true });
+    panel.addRequest({
+      ...request('https://example.test/dup-inplace', '{"ok":1}'),
+      startedDateTime: dupIso(220),
+      request: { url: 'https://example.test/dup-inplace', method: 'GET', headers: [], queryString: [] },
+    });
+    await waitFor(() => firstInPlaceRow.querySelector('.duplicate-warn-badge')?.textContent === '重复 1/3');
+    check(inPlaceRows()[0] === firstInPlaceRow
+      && doc.activeElement === focusedCopyBtn
+      && doc.querySelector('#detailMeta').textContent.includes('重复 1/3'),
+      '新请求加入重复组时原位更新徽标、保持按钮焦点并同步刷新 Preview 重复信息');
+
+    // 已开启「重复」快捷筛选时关闭警告开关，自动取消并禁用该筛选，避免列表变空。
+    clickFilter('[data-filter="duplicate"]');
+    const filteredDupCount = rows().length;
+    dupToggle.checked = false;
+    dupToggle.dispatchEvent(new panel.Event('change'));
+    const dupChip = doc.querySelector('[data-filter="duplicate"]');
+    check(filteredDupCount >= 2 && dupChip.disabled && dupChip.getAttribute('aria-pressed') === 'false'
+      && rows().length > filteredDupCount,
+      '关闭重复警告时同步取消并禁用“重复”筛选，列表恢复显示全部请求');
+    dupToggle.checked = true;
+    dupToggle.dispatchEvent(new panel.Event('change'));
+    check(!dupChip.disabled, '重新开启重复警告后恢复“重复”筛选按钮可用');
+
+    const beforeUploadWarnings = rows().length;
+    for (const offset of [0, 100]) {
+      const upload = request('https://example.test/dup-upload', '{}');
+      upload.startedDateTime = dupIso(offset);
+      upload.request.method = 'POST';
+      upload.request.postData = {
+        mimeType: 'multipart/form-data',
+        params: [{name:'file',fileName:'sample.txt',contentType:'text/plain',fileSize:5}],
+      };
+      panel.addRequest(upload);
+    }
+    await waitFor(() => rows().length === beforeUploadWarnings + 2);
+    clickFilter('[data-filter="duplicate"]');
+    const uploadWarnings = [...rows()].filter(row => row.querySelector('.url')?.textContent === '/dup-upload');
+    check(uploadWarnings.length === 2 && uploadWarnings.every((row, index) => {
+      const badge = row.querySelector('.duplicate-warn-badge');
+      return badge?.textContent === '可能重复 ' + (index + 1) + '/2' && badge.title.includes('上传正文不完整');
+    }), '重复筛选中的同元数据上传显示可能重复，悬停解释文件内容未能确认');
+    uploadWarnings[1].click();
+    check(doc.querySelector('#detailMeta').textContent.includes('可能重复 2/2'), '预览状态栏区分可能重复的上传');
+    clickFilter('[data-filter-reset]');
+
     // 2. 只有当前选中行的快捷复制按钮进入 Tab 顺序，避免长列表产生大量 Tab 停靠点。
     panel.selectRecord(Number(rows()[0].dataset.recordId));
     const tabbableRowButtons = () => [...doc.querySelectorAll('.row-copy-btn')].filter(button => button.tabIndex >= 0);
@@ -847,6 +1024,52 @@ frame.addEventListener('load', async () => {
     check(doc.querySelector('#copyCurlBtn').textContent.includes('Copy cURL') && doc.querySelector('#paramFilterBtn').textContent.includes('Settings')
       && requestSort.title.includes('oldest requests first')
       && ruleRoot.querySelector('[type="submit"]').textContent==='Save rules', '新增控件完整支持英文文案');
+
+    // 英文界面 320px 窄屏下同时展示重复与业务失败徽标时，路径不被挤为 0 且两枚徽标不被裁切。
+    const beforeNarrowBadges = rows().length;
+    const narrowBase = Date.now() - 2000;
+    panel.addRequest({
+      ...request('https://example.test/api/v1/narrow-double-badge', '{"success":false,"errorCode":"E_DUP"}'),
+      startedDateTime: new Date(narrowBase).toISOString(),
+      request: { url: 'https://example.test/api/v1/narrow-double-badge', method: 'POST', headers: [], queryString: [] },
+    });
+    panel.addRequest({
+      ...request('https://example.test/api/v1/narrow-double-badge', '{"success":false,"errorCode":"E_DUP"}'),
+      startedDateTime: new Date(narrowBase + 100).toISOString(),
+      request: { url: 'https://example.test/api/v1/narrow-double-badge', method: 'POST', headers: [], queryString: [] },
+    });
+    await waitFor(() => rows().length === beforeNarrowBadges + 2);
+    frame.style.width = '320px';
+    frame.style.height = '900px';
+    doc.querySelector('[data-layout-mode="auto"]').click();
+    await new Promise(resolve => panel.requestAnimationFrame(() => panel.requestAnimationFrame(resolve)));
+    const doubleBadgeRow = [...rows()].find(row => row.textContent.includes('/narrow-double-badge') && row.classList.contains('duplicate-request') && row.classList.contains('business-failed'));
+    const doubleCellRect = doubleBadgeRow.querySelector('.url-cell').getBoundingClientRect();
+    const doubleUrlRect = doubleBadgeRow.querySelector('.url').getBoundingClientRect();
+    const doubleDupRect = doubleBadgeRow.querySelector('.duplicate-warn-badge').getBoundingClientRect();
+    const doubleFailRect = doubleBadgeRow.querySelector('.business-fail-badge').getBoundingClientRect();
+    check(doubleUrlRect.width >= 36
+      && doubleDupRect.width > 0 && doubleDupRect.right <= doubleCellRect.right + 0.5
+      && doubleFailRect.width > 0 && doubleFailRect.right <= doubleCellRect.right + 0.5,
+      '320px 英文界面同时显示重复和业务失败徽标时路径保持可读且徽标不裁切：' + JSON.stringify({
+        cellWidth: Math.round(doubleCellRect.width),
+        urlWidth: Math.round(doubleUrlRect.width),
+        dupRightGap: Math.round(doubleCellRect.right - doubleDupRect.right),
+        failRightGap: Math.round(doubleCellRect.right - doubleFailRect.right),
+      }));
+    const previousRecordId = panel.getSelectedRecord().id;
+    panel.selectRecord(Number(doubleBadgeRow.dataset.recordId));
+    doc.querySelector('[data-layout-mode="horizontal"]').click();
+    clickFilter('[data-method="GET"]');
+    const detailPane = doc.querySelector('.detail-pane').getBoundingClientRect();
+    check([filteredOut, detailHttpStatus, detailBusinessStatus].every(node => {
+      const bounds = node.getBoundingClientRect();
+      return bounds.width > 0 && bounds.right <= detailPane.right && node.scrollWidth <= node.clientWidth;
+    }) && filteredOut.textContent === 'Filtered out' && detailBusinessStatus.textContent.includes('Business failure'),
+    '320px 英文左右布局仍完整显示筛选外标签、HTTP 状态和业务失败原因');
+    clickFilter('[data-method="all"]');
+    doc.querySelector('[data-layout-mode="auto"]').click();
+    panel.selectRecord(previousRecordId);
     doc.querySelector('#paramFilterBtn').click();
     doc.querySelector('[data-settings-tab="business"]').click();
     const responsive = [];
@@ -905,6 +1128,78 @@ frame.addEventListener('load', async () => {
     check(responsive.every(item=>!item.overflow&&!item.filters&&!item.settings)
       && [...new Set(responsive.map(item=>item.width))].join(',')==='320,360,375,480,560,620,890,1280', '英文界面 320～1280 宽度的筛选和规则设置无横向溢出：'+JSON.stringify(responsive.filter(item=>item.overflow||item.filters||item.settings)));
     frame.style.width='1200px';
+
+    // 两个同 URL 的请求先从 HAR 出现，再以相反顺序完成。
+    panel.clearRequestRecords('HAR regression');
+    let completeHarRequest;
+    let supplyHarSnapshot;
+    panel.startDevToolsCapture({
+      network: {
+        onRequestFinished: { addListener: listener => { completeHarRequest = listener; } },
+        onNavigated: { addListener() {} },
+        getHAR: done => { supplyHarSnapshot = done; },
+      },
+      inspectedWindow: { eval: (expression, done) => done(panel.performance.timeOrigin) },
+    });
+    const harStart = Date.now();
+    let readA;
+    let readB;
+    const harA = { ...request('https://example.test/same-har', '{}'),
+      startedDateTime: new Date(harStart).toISOString(), getContent: done => { readA = done; } };
+    const harB = { ...harA, startedDateTime: new Date(harStart + 1).toISOString(), getContent: done => { readB = done; } };
+    const historical = { ...harA, startedDateTime: new Date(harStart - 1000).toISOString() };
+    const collision = { ...harA, request: { ...harA.request, url: 'https://example.test/ambiguous-har' } };
+    supplyHarSnapshot({ entries: [historical, harA, harB, collision, { ...collision }] });
+    await waitFor(() => rows().length === 2);
+    const [firstHarRow, secondHarRow] = rows();
+    check(firstHarRow.querySelector('.request-pending-badge')?.textContent === 'Pending'
+      && secondHarRow.querySelector('.request-pending-badge')?.textContent === 'Pending',
+      'HAR 提前显示进行中请求，历史请求和时间相同的冲突项等完成事件处理');
+    panel.selectRecord(Number(firstHarRow.dataset.recordId));
+    clickFilter('[data-filter="httpFailure"]');
+    check(rows().length === 0 && preview.textContent.includes('Pending'), '进行中的请求不会进入 HTTP 失败筛选');
+    clickFilter('[data-filter-reset]');
+    const [visibleHarA, visibleHarB] = rows();
+    readB('{"name":"second"}', '');
+    completeHarRequest({ ...harB, getContent() { throw new Error('应复用进行中请求的正文读取'); } });
+    await waitFor(() => visibleHarB.querySelector('.status').textContent === '200');
+    check(rows()[0] === visibleHarA && rows()[1] === visibleHarB && visibleHarA.querySelector('.request-pending-badge')
+      && visibleHarB.querySelector('.request-index').textContent === '2', '后发先完成的请求只回填自己的行与序号');
+    readA('{"success":false,"name":"first"}', '');
+    completeHarRequest({ ...harA, getContent() { throw new Error('应复用进行中请求的正文读取'); } });
+    await waitFor(() => preview.textContent.includes('"first"') && visibleHarA.classList.contains('business-failed'));
+    check(rows()[0] === visibleHarA && visibleHarA.querySelector('.request-index').textContent === '1' && visibleHarA.classList.contains('selected'),
+      '首个慢请求原位回填正文和业务失败，保留选中态和序号');
+    completeHarRequest({ ...collision, getContent: done => done('{"name":"a"}', '') });
+    completeHarRequest({ ...collision, getContent: done => done('{"name":"b"}', '') });
+    await waitFor(() => rows().length === 4);
+    check([...rows()].filter(row=>row.querySelector('.url').textContent === '/ambiguous-har').length === 2,
+      '相同开始时间的并发完成后仍为两条记录');
+    const lastHarSnapshot = supplyHarSnapshot;
+    await waitFor(() => supplyHarSnapshot !== lastHarSnapshot);
+    panel.clearRequestRecords('HAR regression complete');
+    supplyHarSnapshot({ entries: [harA, harB] });
+    check(rows().length === 0, '清空后丢弃清空前发出的 HAR 快照');
+
+    // 500 条同组突发请求在同帧合并重算重复标记，不阻塞采集循环。
+    const burstBase = Date.now();
+    const burstStart = panel.performance.now();
+    for (let i = 0; i < 500; i++) {
+      panel.addRequest({
+        _resourceType: 'fetch',
+        startedDateTime: new Date(burstBase + i).toISOString(),
+        time: 10,
+        request: { url: 'https://example.test/api/v1/burst-dup', method: 'GET', headers: [], queryString: [] },
+        response: { status: 200, statusText: 'OK', headers: [], content: { mimeType: 'application/json' } },
+        getContent: done => done('{"ok":true}', ''),
+      });
+    }
+    const burstLoopMs = Math.round(panel.performance.now() - burstStart);
+    await waitFor(() => rows().length === 500 && rows()[0].querySelector('.duplicate-warn-badge')?.textContent === 'Dup 1/500');
+    const burstTotalMs = Math.round(panel.performance.now() - burstStart);
+    check(rows()[499].querySelector('.duplicate-warn-badge')?.textContent === 'Dup 500/500' && burstLoopMs < 250,
+      `500 条同组突发请求同帧合并计算（采集循环 ${burstLoopMs} ms，含首帧渲染 ${burstTotalMs} ms）`);
+
     output.dataset.status='passed';
     output.textContent += `\n完成：${results.length} 项检查通过。`;
   } catch (error) {

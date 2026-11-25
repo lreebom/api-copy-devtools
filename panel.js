@@ -6,11 +6,13 @@ const {
   looksLikeJson, decodeResponseContent, tryPretty, getResponseJson,
   getRequestBody, formatFileSize, getFormDataItems, getRequestBodyValue,
   decodeUrlComponent, decodeUrlPath, formatReadableSearch, getTokenFromRecord, formatCurl,
-  markDuplicateRequests,
+  compareRequestStartTime, markDuplicateRequests,
 } = ApiCopyRequestData;
 localizeDocument();
 
 const MAX_RECORDS = 500;
+// 仅在面板可见时读取 HAR，同一时间只发起一次快照读取。
+const HAR_POLL_INTERVAL = 500;
 // 超过 1 MiB 的 JSON 响应不在采集回调中同步解析，改在选中查看时按需解析。
 const SYNC_JSON_PARSE_LIMIT = 1024 * 1024;
 // 响应正文总缓存预算（24 MiB），超限时优先释放最早的非选中记录正文。
@@ -19,7 +21,7 @@ const PREVIEW_SEARCH_DELAY = 180;
 const STACK_BREAKPOINT = 1100;
 const DEFAULT_IGNORED_QUERY_PARAMS = ['_t'];
 const DEFAULT_IGNORED_URL_PATHS = ['/jsfulldatasave-be/savedatasfromjs'];
-const DEFAULT_PATH_PREFIX_SEGMENTS = 3;
+const DEFAULT_PATH_PREFIX_SEGMENTS = 0;
 const DEFAULT_DUPLICATE_WINDOW_MS = 1000;
 const IGNORED_PARAMS_STORAGE_KEY = 'apiCopyIgnoredQueryParams';
 const IGNORED_PATHS_STORAGE_KEY = 'apiCopyIgnoredUrlPaths';
@@ -80,6 +82,9 @@ const state = {
   seenRequests: new WeakSet(),
   selectedId: null,
   nextId: 1,
+  // 清空或换页后的采集边界，防止旧 HAR 快照恢复已清除的请求。
+  captureClearedAt: 0,
+  harPollingEnabled: true,
   ignoredQueryParams: loadIgnoredQueryParams(),
   // 埋点、统计等非业务请求按 URL 路径排除。
   ignoredUrlPaths: loadIgnoredUrlPaths(),
@@ -90,6 +95,8 @@ const state = {
   // 短时间内发出完全相同的请求时，在列表上给出重复警告徽标。
   duplicateWarningEnabled: loadDuplicateWarningEnabled(),
   duplicateWindowMs: loadDuplicateWindowMs(),
+  // 新请求到达或设置变更时先标脏，统一推迟到本帧列表渲染时重算一次，避免突发请求同步卡顿。
+  duplicateMarksDirty: false,
   // 默认沿用较早请求在前，用户切换后在刷新和重新打开面板时恢复。
   requestSortOrder: localStorage.getItem(REQUEST_SORT_STORAGE_KEY) === 'newest' ? 'newest' : 'oldest',
   // Preview 默认按字母排列字段，切换请求时保留当前排序方式。
@@ -141,7 +148,16 @@ const el = {
   requestParamsContent: document.querySelector('#requestParamsContent'),
   requestParamsMeta: document.querySelector('#requestParamsMeta'),
   countText: document.querySelector('#countText'),
+  // 预览标题分别展示复制目标、筛选状态和响应信息。
+  detailPlaceholder: document.querySelector('#detailPlaceholder'),
+  detailRequest: document.querySelector('#detailRequest'),
+  detailRequestTarget: document.querySelector('#detailRequestTarget'),
+  detailFilteredOut: document.querySelector('#detailFilteredOut'),
   detailMeta: document.querySelector('#detailMeta'),
+  detailHttpStatus: document.querySelector('#detailHttpStatus'),
+  detailBusinessStatus: document.querySelector('#detailBusinessStatus'),
+  detailDuplicateStatus: document.querySelector('#detailDuplicateStatus'),
+  detailResponseInfo: document.querySelector('#detailResponseInfo'),
   previewContent: document.querySelector('#previewContent'),
   previewSearchInput: document.querySelector('#previewSearchInput'),
   previewSearchMatches: document.querySelector('#previewSearchMatches'),
@@ -203,7 +219,10 @@ function scheduleDeferredRuleDrain() {
   }, 0);
 }
 
-const requestFilters = ApiCopyRequestFilters.create({ onChange: renderRequestList });
+const requestFilters = ApiCopyRequestFilters.create({
+  onChange: renderRequestList,
+  duplicateEnabled: state.duplicateWarningEnabled,
+});
 const businessRules = ApiCopyBusinessRules.createSettings({
   t,
   onSave(rules) {
@@ -327,6 +346,8 @@ function enforceResponseBodyBudget(preferredId = null) {
 // 按正文状态生成界面提示或复制标注，确保提示文案与真实正文彻底分离。
 function getResponseStatusText(record, forCopy = false) {
   switch (record.responseState) {
+    case 'pending':
+      return t('requestPending');
     case 'loading':
       return forCopy ? t('responseNotReady') : t('loadingResponse');
     case 'empty':
@@ -344,11 +365,17 @@ function getResponseStatusText(record, forCopy = false) {
   }
 }
 
+function markDuplicateMarksDirty() {
+  state.duplicateMarksDirty = true;
+}
+
 // 按当前过滤 Query 与重复间隔设置重算全部可见记录的重复标记。
 function refreshDuplicateMarks() {
+  if (!state.duplicateMarksDirty) return false;
+  state.duplicateMarksDirty = false;
   const activeRecords = [];
   for (const record of state.records) {
-    if (isIgnoredRequestUrl(record.url)) {
+    if (record.responseState === 'pending' || isIgnoredRequestUrl(record.url)) {
       record.duplicateOfId = null;
       record.duplicateGroupId = null;
       record.duplicateGapMs = null;
@@ -361,49 +388,69 @@ function refreshDuplicateMarks() {
   markDuplicateRequests(activeRecords, {
     enabled: state.duplicateWarningEnabled,
     windowMs: state.duplicateWindowMs,
-    getFilteredUrl: filterUrlQuery,
+    getFilteredUrl: normalizeUrlForDuplicate,
   });
+  return true;
 }
 
-function addRequest(request) {
+// HAR 和完成事件都能提供请求开始时间、方法和完整 URL。
+function getHarRequestKey(request) {
+  const id = request._requestId ?? request.requestId;
+  if (id != null) return `id:${id}`;
+  if (!request.request?.url || !Number.isFinite(Date.parse(request.startedDateTime))) return null;
+  return JSON.stringify([request.startedDateTime, request.request.method, request.request.url]);
+}
+
+// 缓存上限淘汰或 HAR 配对冲突时，一并清除已移除记录的预览。
+function clearRemovedSelection(record) {
+  if (record.id !== state.selectedId) return;
+  state.selectedId = null;
+  el.previewContent.replaceChildren();
+  renderDetail();
+}
+
+function addRequest(request, { pending = false, existing = null } = {}) {
   if (!request?.request?.url) return;
   const resourceType = normalizeResourceType(request);
   if (!isFetchXhrType(resourceType)) return;
   if (isIgnoredRequestUrl(request.request.url)) return;
 
   // 仅对同一事件对象引用或明确携带相同请求 ID 的回调去重，保留所有并发请求。
-  if (state.seenRequests.has(request)) return;
+  if (!existing && state.seenRequests.has(request)) return;
   const requestId = request._requestId ?? request.requestId ?? null;
-  if (requestId !== null && state.records.some(item => item.requestId === requestId)) return;
+  if (requestId !== null && state.records.some(item => item !== existing && item.requestId === requestId)) return;
   state.seenRequests.add(request);
 
-  const responseHeaders = request.response?.headers || [];
+  const responseHeaders = pending ? [] : request.response?.headers || [];
   const headerMimeType = (responseHeaders.find(header => String(header.name || '').toLowerCase() === 'content-type')?.value || '')
     .split(';', 1)[0].trim();
 
-  const record = {
-    id: state.nextId++,
+  const fields = {
     requestId,
+    harKey: getHarRequestKey(request),
     url: request.request.url,
     method: request.request.method || 'GET',
-    status: request.response?.status ?? 0,
-    statusText: request.response?.statusText || '',
+    status: pending ? 0 : request.response?.status ?? 0,
+    statusText: pending ? '' : request.response?.statusText || request.response?._error || '',
     requestHeaders: request.request.headers || [],
     queryString: request.request.queryString || [],
     postData: request.request.postData || null,
     responseHeaders,
-    mimeType: request.response?.content?.mimeType || headerMimeType,
+    mimeType: pending ? '' : request.response?.content?.mimeType || headerMimeType,
     resourceType,
-    time: request.time ?? null,
+    time: pending ? null : request.time ?? null,
     startedDateTime: request.startedDateTime || '',
+    responseState: pending ? 'pending' : 'loading',
+  };
+  const record = existing ? Object.assign(existing, fields) : {
+    id: state.nextId++,
+    ...fields,
     capturedAt: Date.now(),
     duplicateOfId: null,
     duplicateGroupId: null,
     duplicateGapMs: null,
     duplicateIndex: 1,
     duplicateTotal: 1,
-    // 正文状态与实际文本分开保存，避免占位提示或二进制乱码混入正文。
-    responseState: 'loading',
     responseBody: '',
     responseByteLength: 0,
     responseStoredBytes: 0,
@@ -416,18 +463,29 @@ function addRequest(request) {
     businessRuleRevision: -1,
   };
 
-  state.records.push(record);
-  if (state.records.length > MAX_RECORDS) {
-    const removed = state.records.shift();
-    if (removed?.id === state.selectedId) state.selectedId = null;
+  if (!existing) {
+    state.records.push(record);
+    if (state.records.length > MAX_RECORDS) clearRemovedSelection(state.records.shift());
   }
-  refreshDuplicateMarks();
+  markDuplicateMarksDirty();
 
   scheduleRequestList();
-  if (!state.selectedId && state.previewRecordId !== null) renderDetail();
 
-  if (typeof request.getContent === 'function') {
-    request.getContent((content, encoding) => {
+  if (pending) {
+    if (typeof request.getContent === 'function') {
+      // HAR 发现请求时先登记正文读取。Chrome 会等请求结束，站内地址变化后仍可取回已登记的正文。
+      record.pendingBody = new Promise(resolve => {
+        request.getContent((content, encoding) => resolve({ content, encoding }));
+      }).catch(() => null);
+    }
+    return;
+  }
+
+  const pendingBody = record.pendingBody;
+  delete record.pendingBody;
+  if (existing) renderDetailIfSelected(record.id);
+  if (pendingBody || typeof request.getContent === 'function') {
+    const receiveBody = (content, encoding) => {
       // 页面清空或记录淘汰后，旧回调不再解析大响应或触发渲染。
       if (!state.records.includes(record)) return;
       record.responseEncoding = encoding || '';
@@ -467,7 +525,19 @@ function addRequest(request) {
       }
       scheduleRequestList();
       renderDetailIfSelected(record.id);
-    });
+    };
+    if (pendingBody) {
+      pendingBody.then(body => {
+        if (!state.records.includes(record)) return;
+        if (typeof body?.content === 'string' || typeof request.getContent !== 'function') {
+          receiveBody(body?.content, body?.encoding);
+        } else {
+          request.getContent(receiveBody);
+        }
+      });
+    } else {
+      request.getContent(receiveBody);
+    }
   } else {
     record.responseState = 'unsupported';
     record.responseBody = '';
@@ -508,7 +578,7 @@ function formatRecord(record) {
   lines.push(
     '',
     '================ RESPONSE ===============',
-    `Status: ${record.status}${record.statusText ? ` ${record.statusText}` : ''}`,
+    `Status: ${record.responseState === 'pending' ? t('requestPending') : record.status}${record.statusText ? ` ${record.statusText}` : ''}`,
     '',
     'Response Headers:',
     JSON.stringify(responseHeaders, null, 2),
@@ -553,7 +623,7 @@ function setIgnoredQueryParamsFromInput(value) {
 
   state.ignoredQueryParams = names;
   localStorage.setItem(IGNORED_PARAMS_STORAGE_KEY, JSON.stringify(names));
-  refreshDuplicateMarks();
+  markDuplicateMarksDirty();
   render();
 }
 
@@ -567,14 +637,12 @@ function setIgnoredUrlPathsFromInput(value) {
 
   state.ignoredUrlPaths = paths;
   localStorage.setItem(IGNORED_PATHS_STORAGE_KEY, JSON.stringify(paths));
-  refreshDuplicateMarks();
+  markDuplicateMarksDirty();
 
   // 新规则命中当前请求时同步清空详情，避免列表与 Preview 显示不一致。
   const selected = getSelectedRecord();
   if (selected && isIgnoredRequestUrl(selected.url)) {
     state.selectedId = null;
-    el.detailMeta.textContent = t('selectRequest');
-    el.detailMeta.classList.remove('business-failed-meta');
     el.previewContent.innerHTML = '';
     const placeholder = document.createElement('div');
     placeholder.className = 'preview-placeholder';
@@ -598,9 +666,8 @@ function setDuplicateWindowMs(value) {
   if (!Number.isFinite(parsed) || parsed < 100 || parsed > 60000) return;
   state.duplicateWindowMs = parsed;
   try { localStorage.setItem(DUPLICATE_WINDOW_MS_STORAGE_KEY, String(parsed)); } catch {}
-  refreshDuplicateMarks();
+  markDuplicateMarksDirty();
   renderRequestList();
-  renderDetailMeta(getSelectedRecord());
 }
 
 function filterUrlQuery(rawUrl) {
@@ -627,6 +694,33 @@ function filterUrlQuery(rawUrl) {
     }
     const filtered = params.toString();
     return `${pathname}${filtered ? `?${filtered}` : ''}${hash}`;
+  }
+}
+
+// 重复检测统一按解析后的 Query 重新序列化，避免删除忽略参数前后 %20 与 + 编码不一致导致漏报。
+function normalizeUrlForDuplicate(rawUrl) {
+  const ignored = getIgnoredParamSet();
+  try {
+    const url = new URL(rawUrl);
+    const params = new URLSearchParams();
+    for (const [name, value] of url.searchParams) {
+      if (!ignored.has(normalizeIgnoredParamName(name))) params.append(name, value);
+    }
+    url.search = params.toString();
+    url.hash = '';
+    return url.toString();
+  } catch {
+    const value = String(rawUrl || '');
+    const withoutHash = value.split('#', 1)[0];
+    const qIndex = withoutHash.indexOf('?');
+    if (qIndex < 0) return withoutHash;
+    const pathname = withoutHash.slice(0, qIndex);
+    const params = new URLSearchParams();
+    for (const [name, value] of new URLSearchParams(withoutHash.slice(qIndex + 1))) {
+      if (!ignored.has(normalizeIgnoredParamName(name))) params.append(name, value);
+    }
+    const filtered = params.toString();
+    return `${pathname}${filtered ? `?${filtered}` : ''}`;
   }
 }
 
@@ -682,7 +776,7 @@ function formatRecordSimple(record) {
     ...requestLines,
     '',
     '================ RESPONSE ===============',
-    `Status: ${record.status}${record.statusText ? ` ${record.statusText}` : ''}`,
+    `Status: ${record.responseState === 'pending' ? t('requestPending') : record.status}${record.statusText ? ` ${record.statusText}` : ''}`,
     '',
     responseSection,
   ].join('\n');
@@ -739,12 +833,7 @@ function filteredRecords() {
 }
 
 function recordsInDisplayOrder(records = filteredRecords()) {
-  const ordered = [...records].sort((a, b) => {
-    const aTime = Date.parse(a.startedDateTime);
-    const bTime = Date.parse(b.startedDateTime);
-    if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) return aTime - bTime;
-    return a.id - b.id;
-  });
+  const ordered = [...records].sort(compareRequestStartTime);
   // 只改变显示顺序，采集记录仍按原顺序保存，淘汰旧记录与详情缓存不受影响。
   return state.requestSortOrder === 'newest' ? ordered.reverse() : ordered;
 }
@@ -815,36 +904,100 @@ function updateDuplicatePeerHighlight(hoveredGroupId = null) {
 }
 
 function getDuplicateTitle(record) {
+  if (record.bodyFingerprintIncomplete) {
+    return t('possibleDuplicateTitle', [record.duplicateIndex, record.duplicateTotal]);
+  }
   return record.duplicateIndex === 1
     ? t('duplicateFirstTitle', record.duplicateTotal)
     : t('duplicateWarningTitle', [record.duplicateIndex, record.duplicateTotal, record.duplicateGapMs ?? 0]);
 }
 
-function createRequestRow(record, displayUrl) {
-  const row = document.createElement('div');
-  const isBusinessFailure = record.businessState === 'failure';
-  const isDuplicate = record.duplicateTotal > 1;
-  row.className = `request-row${record.id === state.selectedId ? ' selected' : ''}${isBusinessFailure ? ' business-failed' : ''}${isDuplicate ? ' duplicate-request' : ''}`;
-  row.dataset.duplicateGroup = record.duplicateGroupId ? String(record.duplicateGroupId) : '';
+function buildRowTitle(record, displayUrl) {
   const titleLines = [displayUrl];
-  if (isBusinessFailure) {
+  if (record.businessState === 'failure') {
     titleLines.push(record.businessReason ? t('businessFailureWithReason', record.businessReason) : t('businessFailure'));
   }
-  if (isDuplicate) {
+  if (record.duplicateTotal > 1) {
     titleLines.push(getDuplicateTitle(record));
   }
-  row.title = titleLines.join('\n');
+  return titleLines.join('\n');
+}
+
+// 重复组变化时原位更新徽标和行状态，不替换整行节点，避免当前聚焦按钮失焦。
+function syncRowDuplicateState(row, record, displayUrl) {
+  const isDuplicate = record.duplicateTotal > 1;
+  row.classList.toggle('duplicate-request', isDuplicate);
+  row.dataset.duplicateGroup = record.duplicateGroupId ? String(record.duplicateGroupId) : '';
+  const nextTitle = buildRowTitle(record, displayUrl);
+  if (row.title !== nextTitle) row.title = nextTitle;
+
+  const urlCell = row.querySelector('.url-cell');
+  let dupBadge = urlCell.querySelector('.duplicate-warn-badge');
+  if (isDuplicate) {
+    if (!dupBadge) {
+      dupBadge = document.createElement('span');
+      dupBadge.className = 'duplicate-warn-badge';
+      const outcomeBadge = urlCell.querySelector('.business-fail-badge, .request-pending-badge');
+      if (outcomeBadge) urlCell.insertBefore(dupBadge, outcomeBadge);
+      else urlCell.appendChild(dupBadge);
+    }
+    const badgeKey = record.bodyFingerprintIncomplete ? 'possibleDuplicateBadge' : 'duplicateBadge';
+    const badgeText = t(badgeKey, [record.duplicateIndex, record.duplicateTotal]);
+    if (dupBadge.textContent !== badgeText) dupBadge.textContent = badgeText;
+    const badgeTitle = getDuplicateTitle(record);
+    if (dupBadge.title !== badgeTitle) dupBadge.title = badgeTitle;
+  } else if (dupBadge) {
+    dupBadge.remove();
+  }
+}
+
+// 状态和徽标就地更新，响应回来时保留同一行、选中态和复制按钮焦点。
+function syncRowResponseState(row, record) {
+  const pending = record.responseState === 'pending';
+  const failed = record.businessState === 'failure';
+  const status = row.querySelector('.status');
+  const statusClass = pending ? 'pending' : record.status >= 200 && record.status < 400 ? 'ok' : 'bad';
+  const statusText = pending ? '…' : String(record.status || '-');
+  const statusTitle = pending ? t('requestPending') : record.statusText;
+  if (status.className !== `status ${statusClass}`) status.className = `status ${statusClass}`;
+  if (status.textContent !== statusText) status.textContent = statusText;
+  if (status.title !== statusTitle) status.title = statusTitle;
+  row.classList.toggle('business-failed', failed);
+
+  const urlCell = row.querySelector('.url-cell');
+  let badge = urlCell.querySelector('.business-fail-badge, .request-pending-badge');
+  if (!pending && !failed) {
+    badge?.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement('span');
+    urlCell.appendChild(badge);
+  }
+  const badgeClass = pending ? 'request-pending-badge' : 'business-fail-badge';
+  const badgeText = t(pending ? 'requestPending' : 'businessFailure');
+  const badgeTitle = pending ? badgeText : record.businessReason || t('businessResponseFailed');
+  if (badge.className !== badgeClass) badge.className = badgeClass;
+  if (badge.textContent !== badgeText) badge.textContent = badgeText;
+  if (badge.title !== badgeTitle) badge.title = badgeTitle;
+}
+
+function createRequestRow(record, displayUrl) {
+  const row = document.createElement('div');
+  row.className = 'request-row';
+  row.title = buildRowTitle(record, displayUrl);
 
   const requestIndex = document.createElement('span');
   requestIndex.className = 'request-index';
 
   const method = document.createElement('span');
   method.className = 'method';
+  const methodText = String(record.method || '').toUpperCase();
+  method.dataset.method = methodText;
   method.textContent = record.method;
 
   const status = document.createElement('span');
-  status.className = `status ${record.status >= 200 && record.status < 400 ? 'ok' : 'bad'}`;
-  status.textContent = String(record.status || '-');
+  status.className = 'status';
 
   const requestMeta = document.createElement('span');
   requestMeta.className = 'request-meta';
@@ -857,22 +1010,6 @@ function createRequestRow(record, displayUrl) {
   url.className = 'url';
   url.textContent = displayUrl;
   urlCell.appendChild(url);
-
-  if (isDuplicate) {
-    const dupBadge = document.createElement('span');
-    dupBadge.className = 'duplicate-warn-badge';
-    dupBadge.textContent = t('duplicateBadge', [record.duplicateIndex, record.duplicateTotal]);
-    dupBadge.title = getDuplicateTitle(record);
-    urlCell.appendChild(dupBadge);
-  }
-
-  if (isBusinessFailure) {
-    const badge = document.createElement('span');
-    badge.className = 'business-fail-badge';
-    badge.textContent = t('businessFailure');
-    badge.title = record.businessReason || t('businessResponseFailed');
-    urlCell.appendChild(badge);
-  }
 
   const rowActions = document.createElement('span');
   rowActions.className = 'row-copy-actions';
@@ -893,6 +1030,8 @@ function createRequestRow(record, displayUrl) {
 }
 
 function renderRequestList() {
+  const duplicateUpdated = refreshDuplicateMarks();
+  if (duplicateUpdated) renderDetailMeta(getSelectedRecord());
   const newestFirst = state.requestSortOrder === 'newest';
   el.requestSortBtn.setAttribute('aria-pressed', String(newestFirst));
   el.requestSortBtn.setAttribute('aria-label', t(newestFirst ? 'requestNewestFirst' : 'requestOldestFirst'));
@@ -901,7 +1040,12 @@ function renderRequestList() {
     ? 'M7 20V4m-3 3 3-3 3 3'
     : 'M7 4v16m-3-3 3 3 3-3');
   const records = filteredRecords();
-  const displayRecords = recordsInDisplayOrder(records);
+  // 先为本批已采集记录按开始时间编号，再筛选和切换方向。
+  const visibleIds = new Set(records.map(record => record.id));
+  const chronological = [...state.records].sort(compareRequestStartTime);
+  const requestNumbers = new Map(chronological.map((record, index) => [record.id, index + 1]));
+  const displayRecords = chronological.filter(record => visibleIds.has(record.id));
+  if (newestFirst) displayRecords.reverse();
   const total = state.records.filter(record => !isIgnoredRequestUrl(record.url)).length;
   const businessFailureCount = records.filter(record => record.businessState === 'failure').length;
   el.countText.textContent = records.length !== total
@@ -909,7 +1053,8 @@ function renderRequestList() {
     : businessFailureCount ? t('requestCountWithFailures', [records.length, businessFailureCount]) : t('requestCount', records.length);
 
   const existing = new Map([...el.requestList.querySelectorAll('.request-row')].map(row => [Number(row.dataset.recordId), row]));
-  const visibleIds = new Set(displayRecords.map(record => record.id));
+  // 快捷筛选只影响列表，选中行被隐藏时仍可以阅读和复制原请求。
+  el.detailFilteredOut.hidden = state.selectedId === null || visibleIds.has(state.selectedId);
   for (const [id, row] of existing) {
     if (!visibleIds.has(id)) row.remove();
   }
@@ -923,17 +1068,9 @@ function renderRequestList() {
   }
 
   let anchor = el.requestList.firstElementChild;
-  for (const [index, record] of displayRecords.entries()) {
+  for (const record of displayRecords) {
     const displayUrl = getDisplayUrl(record.url);
-    const rowKey = JSON.stringify([
-      displayUrl,
-      record.businessState === 'failure',
-      record.businessReason,
-      record.duplicateGroupId,
-      record.duplicateIndex,
-      record.duplicateTotal,
-      record.duplicateGapMs,
-    ]);
+    const rowKey = JSON.stringify([displayUrl, record.method]);
     let row = existing.get(record.id);
     if (!row || row.dataset.rowKey !== rowKey) {
       const replacement = createRequestRow(record, displayUrl);
@@ -945,9 +1082,10 @@ function renderRequestList() {
       }
       row = replacement;
     }
-    // 插入或淘汰其他请求时只更新序号，保留当前行的复制按钮及焦点。
+    syncRowResponseState(row, record);
+    syncRowDuplicateState(row, record, displayUrl);
     const requestIndex = row.firstElementChild;
-    const rowNumber = String(index + 1);
+    const rowNumber = String(requestNumbers.get(record.id));
     if (requestIndex.textContent !== rowNumber) requestIndex.textContent = rowNumber;
     const isSelected = record.id === state.selectedId;
     row.classList.toggle('selected', isSelected);
@@ -1319,24 +1457,48 @@ function renderPreview(record) {
   renderPreviewSearchMatches(query);
 }
 
-// 修改规则只更新状态文案，不重建当前 JSON 或请求 Body。
+// 更新预览标题，供切换请求、重复组更新和业务规则重判复用。
 function renderDetailMeta(record) {
+  el.detailPlaceholder.hidden = Boolean(record);
+  el.detailRequest.hidden = !record;
+  el.detailMeta.hidden = !record;
   if (!record) return;
-  const businessMeta = record.businessState === 'failure'
-    ? ` · ${record.businessReason ? t('businessFailureMetaWithReason', record.businessReason) : t('businessFailureMeta')}`
+
+  const target = `${record.method} ${getDisplayUrl(record.url)}`;
+  el.detailRequestTarget.textContent = target;
+  el.detailRequestTarget.title = target;
+
+  const status = record.statusText ? `${record.status} ${record.statusText}` : record.status;
+  el.detailHttpStatus.textContent = record.responseState === 'pending' ? t('requestPending') : `HTTP ${status}`;
+  el.detailHttpStatus.classList.toggle('is-failure', ApiCopyRequestFilters.isHttpFailure(record));
+
+  const businessFailed = record.businessState === 'failure';
+  el.detailBusinessStatus.hidden = !businessFailed;
+  el.detailBusinessStatus.textContent = businessFailed
+    ? (record.businessReason ? t('businessFailureMetaWithReason', record.businessReason) : t('businessFailureMeta'))
     : '';
-  const duplicateMeta = record.duplicateTotal > 1
-    ? ` · ${record.duplicateIndex === 1
-      ? t('duplicateFirstMeta', record.duplicateTotal)
-      : t('duplicateMeta', [record.duplicateIndex, record.duplicateTotal, record.duplicateGapMs ?? 0])}`
-    : '';
-  el.detailMeta.textContent = `${record.status}${record.statusText ? ` ${record.statusText}` : ''}${record.mimeType ? ` · ${record.mimeType}` : ''}${record.time != null ? ` · ${Math.round(record.time)} ms` : ''}${businessMeta}${duplicateMeta}`;
-  el.detailMeta.title = el.detailMeta.textContent;
-  el.detailMeta.classList.toggle('business-failed-meta', record.businessState === 'failure');
+
+  let duplicateStatus = '';
+  if (record.duplicateTotal > 1) {
+    if (record.bodyFingerprintIncomplete) {
+      duplicateStatus = t('possibleDuplicateBadge', [record.duplicateIndex, record.duplicateTotal]);
+    } else {
+      duplicateStatus = record.duplicateIndex === 1
+        ? t('duplicateFirstMeta', record.duplicateTotal)
+        : t('duplicateMeta', [record.duplicateIndex, record.duplicateTotal, record.duplicateGapMs ?? 0]);
+    }
+  }
+  el.detailDuplicateStatus.textContent = duplicateStatus;
+  el.detailDuplicateStatus.hidden = !duplicateStatus;
+
+  const responseInfo = [record.mimeType, record.time == null ? '' : `${Math.round(record.time)} ms`].filter(Boolean).join(' · ');
+  el.detailResponseInfo.textContent = responseInfo;
+  el.detailResponseInfo.hidden = !responseInfo;
 }
 
 function renderDetail() {
   const record = getSelectedRecord();
+  renderDetailMeta(record);
   el.copyFullBtn.disabled = !record;
   el.copySimpleBtn.disabled = !record;
   el.copyPathBtn.disabled = !record;
@@ -1349,7 +1511,6 @@ function renderDetail() {
     state.previewSearchIndex = null;
     if (state.previewRecordId !== null) {
       el.previewContent.innerHTML = '';
-      el.detailMeta.textContent = t('selectRequest');
       state.previewRecordId = null;
     }
     return;
@@ -1357,7 +1518,6 @@ function renderDetail() {
 
   preservePreviewOpenStates(record);
 
-  renderDetailMeta(record);
   const scrollTop = el.previewContent.scrollTop;
   const sameRecord = state.previewRecordId === record.id;
   renderPreview(record);
@@ -1506,9 +1666,9 @@ el.duplicateWarningInput.addEventListener('change', event => {
   state.duplicateWarningEnabled = event.target.checked;
   el.duplicateWindowMsInput.disabled = !state.duplicateWarningEnabled;
   try { localStorage.setItem(DUPLICATE_WARNING_STORAGE_KEY, String(state.duplicateWarningEnabled)); } catch {}
-  refreshDuplicateMarks();
+  requestFilters.setDuplicateEnabled(state.duplicateWarningEnabled);
+  markDuplicateMarksDirty();
   renderRequestList();
-  renderDetailMeta(getSelectedRecord());
 });
 
 el.duplicateWindowMsInput.addEventListener('input', event => {
@@ -1544,13 +1704,12 @@ el.resetIgnoredParamsBtn.addEventListener('click', () => {
   el.duplicateWarningInput.checked = state.duplicateWarningEnabled;
   el.duplicateWindowMsInput.value = String(state.duplicateWindowMs);
   el.duplicateWindowMsInput.disabled = false;
-  refreshDuplicateMarks();
+  requestFilters.setDuplicateEnabled(true);
+  markDuplicateMarksDirty();
 
   const selected = getSelectedRecord();
   if (selected && isIgnoredRequestUrl(selected.url)) {
     state.selectedId = null;
-    el.detailMeta.textContent = t('selectRequest');
-    el.detailMeta.classList.remove('business-failed-meta');
     el.previewContent.innerHTML = '';
     const placeholder = document.createElement('div');
     placeholder.className = 'preview-placeholder';
@@ -1560,26 +1719,37 @@ el.resetIgnoredParamsBtn.addEventListener('click', () => {
   render();
 });
 
-function clearRequestRecords(placeholderText) {
+// 导航确认期间仍实时采集，清除旧页面时保留已收到的新记录。
+function clearRequestRecords(placeholderText, retainedRecords = [], captureClearedAt = Date.now()) {
+  state.captureClearedAt = Math.max(state.captureClearedAt, captureClearedAt);
+  state.records = retainedRecords;
+  state.duplicateMarksDirty = retainedRecords.length > 0;
+  if (retainedRecords.length) {
+    state.deferredRuleQueue = state.deferredRuleQueue.filter(record => retainedRecords.includes(record));
+    if (getSelectedRecord()) {
+      renderRequestList();
+      return;
+    }
+  } else {
+    clearTimeout(state.businessRuleReevalTimer);
+    state.businessRuleReevalTimer = null;
+    state.deferredRuleQueue = [];
+    state.businessRuleRevision += 1;
+    state.seenRequests = new WeakSet();
+    state.nextId = 1;
+  }
+
   clearTimeout(state.previewSearchTimer);
-  clearTimeout(state.businessRuleReevalTimer);
-  state.businessRuleReevalTimer = null;
-  state.deferredRuleQueue = [];
-  state.businessRuleRevision += 1;
+  state.previewSearchTimer = null;
   state.previewSearchIndex = null;
   state.previewExpandedValues = new Set();
   el.requestParamsContent.dataset.cacheKey = '';
-  state.records = [];
-  state.seenRequests = new WeakSet();
   state.selectedId = null;
-  state.nextId = 1;
   state.previewOpenStates = null;
   state.previewSearchQuery = '';
   state.previewMatches = [];
   state.previewMatchIndex = -1;
   state.previewRecordId = null;
-  el.detailMeta.textContent = t('selectRequest');
-  el.detailMeta.classList.remove('business-failed-meta');
   el.previewSearchInput.value = '';
   el.previewContent.innerHTML = '';
   const placeholder = document.createElement('div');
@@ -1928,13 +2098,109 @@ async function loadPreviewRequests() {
   selectRecord(defaultSelectedId ?? state.records[state.records.length - 1].id);
 }
 
-if (globalThis.chrome?.devtools?.network) {
-  // 只记录面板打开后的新请求，刷新面板后从空列表开始。
-  chrome.devtools.network.onRequestFinished.addListener(addRequest);
-  // 被调试页面刷新或跳转时清空旧页面记录，避免两次请求混在一起。
-  chrome.devtools.network.onNavigated.addListener(() => {
-    clearRequestRecords(t('pageReloadedPlaceholder'));
+// DevTools 标签显隐时暂停或恢复快照读取。
+function setHarPollingEnabled(enabled) {
+  state.harPollingEnabled = enabled;
+}
+
+function startDevToolsCapture({ network, inspectedWindow }) {
+  const captureStartedAt = Date.now();
+  // 快照包含历史记录。只建新行，已观察到的请求则由完成事件原位回填。
+  let previousHarKeys = new Set();
+  const finishedSinceSnapshot = new Set();
+  network.onRequestFinished.addListener(request => {
+    if (!request?.request?.url) return;
+    const key = getHarRequestKey(request);
+    const existing = key && state.records.find(record => record.harKey === key && record.responseState === 'pending');
+    const pendingBodyText = existing?.postData?.text;
+    const finishedBodyText = request.request.postData?.text;
+    const bodyMismatch = existing?.requestId === null && typeof pendingBodyText === 'string' && typeof finishedBodyText === 'string'
+      && pendingBodyText !== finishedBodyText;
+    if (!existing && Date.parse(request.startedDateTime) < state.captureClearedAt) return;
+    if (key && typeof network.getHAR === 'function') finishedSinceSnapshot.add(key);
+    addRequest(request, { existing: bodyMismatch ? null : existing });
   });
+
+  function pollHar() {
+    if (!state.harPollingEnabled || document.hidden) {
+      finishedSinceSnapshot.clear();
+      setTimeout(pollHar, HAR_POLL_INTERVAL);
+      return;
+    }
+    const clearedAt = state.captureClearedAt;
+    network.getHAR(har => {
+      if (clearedAt === state.captureClearedAt && Array.isArray(har?.entries)) {
+        const startedAfter = Math.max(captureStartedAt, clearedAt);
+        const requests = new Map();
+        for (const request of har.entries) {
+          const startedAt = Date.parse(request.startedDateTime);
+          if (!Number.isFinite(startedAt) || startedAt < startedAfter || !isFetchXhrType(normalizeResourceType(request))) continue;
+          const key = getHarRequestKey(request);
+          if (key) requests.set(key, requests.has(key) ? null : request);
+        }
+        const retainedKeys = new Set(state.records.map(record => record.harKey));
+        for (const [key, request] of requests) {
+          // Chrome 未公开请求 ID 时，同方法、URL 和开始时间的多条请求等完成后各自录入。
+          if (!request) {
+            const index = state.records.findIndex(record => record.harKey === key && record.responseState === 'pending');
+            if (index !== -1) {
+              const [removed] = state.records.splice(index, 1);
+              clearRemovedSelection(removed);
+              markDuplicateMarksDirty();
+              scheduleRequestList();
+            }
+            continue;
+          }
+          if (!previousHarKeys.has(key) && !finishedSinceSnapshot.has(key) && !retainedKeys.has(key)) {
+            addRequest(request, { pending: true });
+          }
+        }
+        previousHarKeys = new Set([...requests.keys(), ...finishedSinceSnapshot]);
+        finishedSinceSnapshot.clear();
+      }
+      setTimeout(pollHar, HAR_POLL_INTERVAL);
+    });
+  }
+  if (typeof network.getHAR === 'function') pollHar();
+
+  // 同一主文档修改 URL 时，performance.timeOrigin 保持不变。
+  let documentTimeOrigin;
+  // 连续导航只采用最新的检查结果，并保留第一次通知后捕获的请求。
+  let documentCheckId = 0;
+  let recordsBeforeNavigation;
+  let navigationObservedAt;
+
+  function checkDocument() {
+    const checkId = ++documentCheckId;
+    inspectedWindow.eval('performance.timeOrigin', (timeOrigin, exceptionInfo) => {
+      if (checkId !== documentCheckId) return;
+      const previousRecords = recordsBeforeNavigation;
+      const observedAt = navigationObservedAt;
+      recordsBeforeNavigation = undefined;
+      navigationObservedAt = undefined;
+      // 无法读取时不清空，也不把旧文档作为下一次检查的比较基准。
+      const nextTimeOrigin = !exceptionInfo && Number.isFinite(timeOrigin) ? timeOrigin : undefined;
+      const documentChanged = documentTimeOrigin !== undefined && nextTimeOrigin !== undefined
+        && documentTimeOrigin !== nextTimeOrigin;
+      const navigationBoundary = nextTimeOrigin > documentTimeOrigin ? Math.floor(nextTimeOrigin) : observedAt;
+      documentTimeOrigin = nextTimeOrigin;
+      if (documentChanged && previousRecords) {
+        const retainedRecords = state.records.filter(record => !previousRecords.has(record));
+        clearRequestRecords(t('pageReloadedPlaceholder'), retainedRecords, navigationBoundary);
+      }
+    });
+  }
+
+  network.onNavigated.addListener(() => {
+    recordsBeforeNavigation ??= new WeakSet(state.records);
+    navigationObservedAt ??= Date.now();
+    checkDocument();
+  });
+  checkDocument();
+}
+
+if (globalThis.chrome?.devtools?.network) {
+  startDevToolsCapture(chrome.devtools);
 } else if (location.protocol === 'http:' || location.protocol === 'https:' || location.protocol === 'file:') {
   // 明确标记网页预览，避免把样例误认为实际抓取的接口。
   const previewBadge = document.createElement('span');

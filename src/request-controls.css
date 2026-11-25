@@ -15,7 +15,7 @@
   color: var(--accent); border-color: color-mix(in srgb, var(--accent) 20%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, Canvas);
 }
-.filter-segment button:hover, .filter-chip:hover { background: var(--hover); }
+.filter-segment button:hover:not(:disabled), .filter-chip:hover:not(:disabled) { background: var(--hover); }
 .request-sort { flex: 0 0 auto; width: var(--control-height); height: var(--control-height); padding: 0; }
 .slow-threshold { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
 .slow-threshold input {
@@ -25,12 +25,16 @@
 .slow-threshold input:invalid { border-color: #d93025; }
 .filter-reset { min-height: 21px; border-color: transparent; background: transparent; color: var(--muted); }
 
-/* 抽屉覆盖在页面上方，打开、切换分类和关闭均不改变请求与 JSON 的可用空间。 */
-.settings-overlay { position: fixed; inset: 0; z-index: 500; background: color-mix(in srgb, CanvasText 5%, transparent); }
+/* 轻遮罩突出设置抽屉，同时保留底层请求和 JSON 的可读性。 */
+.settings-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  background: color-mix(in srgb, CanvasText 8%, transparent);
+}
 .settings-drawer {
   position: absolute; top: 0; right: 0; bottom: 0; width: min(360px, 100%);
   display: flex; flex-direction: column; background: Canvas; color: CanvasText;
-  border-left: 1px solid var(--border); box-shadow: -6px 0 24px color-mix(in srgb, CanvasText 12%, transparent);
+  border-left: 1px solid var(--border);
+  box-shadow: -2px 0 8px color-mix(in srgb, CanvasText 6%, transparent), -10px 0 28px color-mix(in srgb, CanvasText 12%, transparent);
 }
 .settings-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 7px 12px; border-bottom: 1px solid var(--border-soft); }
 .settings-header strong { font-size: 13px; font-weight: 600; }
@@ -45,9 +49,13 @@
 .filter-setting-input {
   width: 100%; min-width: 0; height: 28px; padding: 0 7px;
   border: 1px solid var(--border); border-radius: 4px;
-  background: Field; color: FieldText; font-size: 12px;
+  background: Field; color: FieldText; font-size: 12px; outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.filter-setting-input:focus { outline-color: var(--accent); }
+.filter-setting-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 70%, CanvasText 15%);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+}
 .path-prefix-input { max-width: 100%; }
 .setting-checkbox { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; font-size: 12px; }
 .setting-checkbox input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
@@ -73,11 +81,11 @@
 .settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
 .settings-save { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, Canvas); }
 .settings-actions [role="status"] { flex-basis: 100%; color: var(--muted); font-size: 12px; }
-.settings-actions .settings-error { color: #d93025; }
+.settings-actions .settings-error { color: var(--color-error); }
 
 /* 成功只替换原图标，不修改文案或占位宽度；无触发按钮与复制失败时显示独立提示。 */
-button.copy-complete, button.copy-complete .action-icon { color: #188038; }
+button.copy-complete, button.copy-complete .action-icon { color: var(--color-ok); }
 .copy-status { position: fixed; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.copy-status.visible { right: 12px; bottom: 12px; z-index: 1100; width: auto; height: auto; max-width: calc(100vw - 24px); clip-path: none; padding: 6px 10px; border: 1px solid var(--border); border-radius: 5px; background: Canvas; color: #188038; box-shadow: 0 2px 12px color-mix(in srgb, CanvasText 12%, transparent); }
-.copy-status.failed { color: #d93025; }
+.copy-status.visible { right: 12px; bottom: 12px; z-index: 1100; width: auto; height: auto; max-width: calc(100vw - 24px); clip-path: none; padding: 6px 10px; border: 1px solid var(--border); border-radius: 5px; background: Canvas; color: var(--color-ok); box-shadow: 0 2px 12px color-mix(in srgb, CanvasText 12%, transparent); }
+.copy-status.failed { color: var(--color-error); }
 .clipboard-fallback { position: fixed; opacity: 0; }

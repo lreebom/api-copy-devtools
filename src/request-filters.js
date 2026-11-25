@@ -3,7 +3,7 @@ globalThis.ApiCopyRequestFilters = (() => {
   const STORAGE_KEY = 'apiCopySlowRequestMs';
 
   function isHttpFailure(record) {
-    return record.status === 0 || record.status >= 400;
+    return record.responseState !== 'pending' && (record.status === 0 || record.status >= 400);
   }
 
   function matches(record, filters) {
@@ -18,16 +18,20 @@ globalThis.ApiCopyRequestFilters = (() => {
     return !filters.slow || (Number.isFinite(record.time) && record.time >= filters.slowMs);
   }
 
-  function create({ onChange }) {
+  function create({ onChange, duplicateEnabled = true }) {
     let slowMs = Number(localStorage.getItem(STORAGE_KEY));
     if (!Number.isFinite(slowMs) || slowMs < 1) slowMs = 1000;
+    let isDuplicateEnabled = Boolean(duplicateEnabled);
     const filters = { method: 'all', httpFailure: false, businessFailure: false, slow: false, duplicate: false, slowMs };
     const root = document.querySelector('#requestQuickFilters');
     const buttons = [...root.querySelectorAll('[data-method], [data-filter]')];
+    const duplicateButton = root.querySelector('[data-filter="duplicate"]');
     const threshold = root.querySelector('input');
     const reset = root.querySelector('[data-filter-reset]');
 
     function render() {
+      if (!isDuplicateEnabled) filters.duplicate = false;
+      if (duplicateButton) duplicateButton.disabled = !isDuplicateEnabled;
       for (const button of buttons) {
         const active = button.dataset.method
           ? filters.method === button.dataset.method : filters[button.dataset.filter];
@@ -38,9 +42,15 @@ globalThis.ApiCopyRequestFilters = (() => {
       reset.hidden = filters.method === 'all' && !filters.httpFailure && !filters.businessFailure && !filters.slow && !filters.duplicate;
     }
 
+    function setDuplicateEnabled(enabled) {
+      isDuplicateEnabled = Boolean(enabled);
+      if (!isDuplicateEnabled) filters.duplicate = false;
+      render();
+    }
+
     root.addEventListener('click', event => {
       const button = event.target.closest('button');
-      if (!button) return;
+      if (!button || button.disabled) return;
       if (button.dataset.method) filters.method = button.dataset.method;
       else if (button.dataset.filter) filters[button.dataset.filter] = !filters[button.dataset.filter];
       else if (button.hasAttribute('data-filter-reset')) {
@@ -60,7 +70,7 @@ globalThis.ApiCopyRequestFilters = (() => {
       try { localStorage.setItem(STORAGE_KEY, String(filters.slowMs)); } catch {}
     });
     render();
-    return { matches: record => matches(record, filters) };
+    return { matches: record => matches(record, filters), setDuplicateEnabled };
   }
 
   return { create, matches, isHttpFailure };

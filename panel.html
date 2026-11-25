@@ -72,13 +72,13 @@
               <button type="button" class="filter-chip" data-filter="httpFailure" aria-pressed="false" title="只看 HTTP 失败（状态码 0 或 ≥400）" data-i18n-title="httpFailureFilterTitle" data-i18n="httpFailureFilter">HTTP失败</button>
               <button type="button" class="filter-chip" data-filter="businessFailure" aria-pressed="false" title="只看不符合业务成功规则的请求" data-i18n-title="businessFailureFilterTitle" data-i18n="businessFailureFilter">业务失败</button>
               <button type="button" class="filter-chip" data-filter="slow" aria-pressed="false" data-i18n="slowRequests">慢请求</button>
-              <button type="button" class="filter-chip" data-filter="duplicate" aria-pressed="false" title="只看设定时间间隔内重复发出的相同请求" data-i18n-title="duplicateFilterTitle" data-i18n="duplicateFilter">重复</button>
+              <button type="button" class="filter-chip" data-filter="duplicate" aria-pressed="false" title="查看设定间隔内的重复或可能重复请求" data-i18n-title="duplicateFilterTitle" data-i18n="duplicateFilter">重复</button>
             </div>
             <label class="slow-threshold" hidden><span data-i18n="slowThreshold">耗时 ≥</span><input type="number" min="1" step="1" value="1000" aria-label="慢请求阈值（毫秒）" data-i18n-aria-label="slowThresholdLabel" /> ms</label>
             <button type="button" class="ghost filter-reset" data-filter-reset hidden data-i18n="resetQuickFilters">重置筛选</button>
           </div>
           <div class="list-columns" aria-hidden="true">
-            <span>#</span>
+            <span title="按请求开始时间编号" data-i18n-title="requestSequence">#</span>
             <span data-i18n="status">状态</span>
             <span data-i18n="path">路径</span>
           </div>
@@ -102,9 +102,21 @@
 
       <section class="detail-pane">
         <div class="detail-header">
-          <div class="detail-heading">
-            <strong>Preview</strong>
-            <div id="detailMeta" class="meta" data-i18n="selectRequest">请选择一个请求</div>
+          <div class="detail-summary">
+            <div class="detail-heading">
+              <strong>Preview</strong>
+              <span id="detailPlaceholder" class="detail-placeholder" data-i18n="selectRequest">请选择一个请求</span>
+              <div id="detailRequest" class="detail-request" hidden>
+                <span id="detailRequestTarget" class="detail-request-target"></span>
+                <span id="detailFilteredOut" class="detail-filtered-out" data-i18n="selectedRequestOutsideFilter" hidden>当前筛选外</span>
+              </div>
+            </div>
+            <div id="detailMeta" class="detail-meta" hidden>
+              <span id="detailHttpStatus" class="detail-http-status"></span>
+              <span id="detailBusinessStatus" class="detail-business-status" hidden></span>
+              <span id="detailDuplicateStatus" hidden></span>
+              <span id="detailResponseInfo" hidden></span>
+            </div>
           </div>
           <div class="detail-tools">
             <div class="layout-switch" role="group" aria-label="面板布局" data-i18n-aria-label="layoutModes">
@@ -158,8 +170,8 @@
         <section id="settingsDisplayPanel" class="settings-tab-panel" role="tabpanel" aria-labelledby="settingsDisplayTab" data-settings-panel="display">
         <div class="filter-setting-row">
           <div class="param-filter-label" data-i18n="pathPrefixSegments">全局路径前缀截断</div>
-          <input id="pathPrefixSegmentsInput" class="filter-setting-input path-prefix-input" type="number" min="0" max="50" step="1" value="3" data-i18n-aria-label="pathPrefixSegments" />
-          <div class="param-filter-help" data-i18n="pathPrefixSegmentsHelp">按路径段数量截断前缀，列表、路径复制和精简请求共用此设置。默认截断 3 段。</div>
+          <input id="pathPrefixSegmentsInput" class="filter-setting-input path-prefix-input" type="number" min="0" max="50" step="1" value="0" data-i18n-aria-label="pathPrefixSegments" />
+          <div class="param-filter-help" data-i18n="pathPrefixSegmentsHelp">按路径段数量截断前缀，列表、路径复制和精简请求共用此设置。默认 0 段，保留完整路径。</div>
         </div>
         <div class="filter-setting-row">
           <div class="param-filter-label" data-i18n="showUrlQuery">列表展示 Query 参数</div>
@@ -170,7 +182,7 @@
           <div class="param-filter-label" data-i18n="duplicateWarningSetting">重复请求警告</div>
           <label class="setting-checkbox"><input id="duplicateWarningInput" type="checkbox" checked /><span data-i18n="duplicateWarningEnabled">识别并标记重复请求</span></label>
           <label class="duplicate-window-field"><span data-i18n="duplicateWindowMsLabel">重复判定间隔（毫秒）</span><input id="duplicateWindowMsInput" class="filter-setting-input" type="number" min="100" max="60000" step="100" value="1000" /></label>
-          <div class="param-filter-help" data-i18n="duplicateWindowMsHelp">在设定间隔内连续发出方法、过滤后 URL 与请求体完全相同的请求时，在第 2 次及后续行显示警告徽标。默认 1000 ms。</div>
+          <div class="param-filter-help" data-i18n="duplicateWindowMsHelp">比较设定间隔内请求的方法、过滤后 URL 和请求体。上传文件内容不完整时，匹配项标记为可能重复。默认 1000 ms。</div>
         </div>
         </section>
         <section id="settingsFilterPanel" class="settings-tab-panel" role="tabpanel" aria-labelledby="settingsFilterTab" data-settings-panel="filter" hidden>

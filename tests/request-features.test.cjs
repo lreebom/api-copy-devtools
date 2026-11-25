@@ -330,4 +330,78 @@ test('markDuplicateRequests 按方法、过滤 URL 和请求体在时间窗口�
   assert.equal(list.some(item => item.duplicateTotal > 1), false);
 });
 
+test('markDuplicateRequests 区分大正文中间差异、表单转义键值并线性批量分组', () => {
+  const base = Date.parse('2026-11-23T09:00:00.000Z');
+  const iso = offset => new Date(base + offset).toISOString();
+  const edge = 'A'.repeat(4500);
+  const largeList = [
+    { id: 1, method: 'POST', url: 'https://example.test/large', startedDateTime: iso(0), postData: { mimeType: 'application/json', text: `${edge}MIDDLE_ONE${edge}` } },
+    { id: 2, method: 'POST', url: 'https://example.test/large', startedDateTime: iso(100), postData: { mimeType: 'application/json', text: `${edge}MIDDLE_TWO${edge}` } },
+    { id: 3, method: 'POST', url: 'https://example.test/large', startedDateTime: iso(200), postData: { mimeType: 'application/json', text: `${edge}MIDDLE_ONE${edge}` } },
+  ];
+  data.markDuplicateRequests(largeList, { enabled: true, windowMs: 1000, getFilteredUrl: url => url });
+  assert.equal(largeList[0].duplicateTotal, 2);
+  assert.equal(largeList[1].duplicateTotal, 1);
+  assert.equal(largeList[2].duplicateTotal, 2);
+  assert.equal(largeList[2].duplicateGroupId, largeList[0].duplicateGroupId);
+
+  const formList = [
+    { id: 10, method: 'POST', url: 'https://example.test/form', startedDateTime: iso(0), postData: { mimeType: 'application/x-www-form-urlencoded', text: 'a%3Db=c' } },
+    { id: 11, method: 'POST', url: 'https://example.test/form', startedDateTime: iso(50), postData: { mimeType: 'application/x-www-form-urlencoded', text: 'a=b%3Dc' } },
+    { id: 12, method: 'POST', url: 'https://example.test/form-params', startedDateTime: iso(0), postData: { mimeType: 'multipart/form-data', params: [{ name: 'a=b', value: 'c' }] } },
+    { id: 13, method: 'POST', url: 'https://example.test/form-params', startedDateTime: iso(50), postData: { mimeType: 'multipart/form-data', params: [{ name: 'a', value: 'b=c' }] } },
+  ];
+  data.markDuplicateRequests(formList, { enabled: true, windowMs: 1000, getFilteredUrl: url => url });
+  assert.equal(formList.every(item => item.duplicateTotal === 1), true);
+
+  const batch = Array.from({ length: 500 }, (_, index) => ({
+    id: 100 + index,
+    method: 'GET',
+    url: 'https://example.test/burst',
+    startedDateTime: iso(index),
+  }));
+  data.markDuplicateRequests(batch, { enabled: true, windowMs: 1000, getFilteredUrl: url => url });
+  assert.equal(batch[0].duplicateIndex, 1);
+  assert.equal(batch[0].duplicateTotal, 500);
+  assert.equal(batch[499].duplicateIndex, 500);
+  assert.equal(batch[499].duplicateTotal, 500);
+});
+
+test('multipart 判重比较可读取的文件内容，并区分只有元数据的请求', () => {
+  const params = [{ name: 'file', fileName: 'sample.txt', contentType: 'text/plain', fileSize: 5 }];
+  const record = (id, content, boundary = 'sample') => ({
+    id,
+    method: 'POST',
+    url: 'https://example.test/upload',
+    startedDateTime: new Date(1760000000000 + id * 100).toISOString(),
+    postData: {
+      mimeType: 'multipart/form-data; boundary=' + boundary,
+      params,
+      text: content === undefined ? undefined : [
+        '--' + boundary,
+        'Content-Disposition: form-data; name="file"; filename="sample.txt"',
+        'Content-Type: text/plain',
+        '',
+        content,
+        '--' + boundary + '--',
+        '',
+      ].join('\r\n'),
+    },
+  });
+  const records = [
+    record(1, 'first'), record(2, 'other'), record(3, 'first', 'different-boundary'),
+    record(4), record(5), record(6, ''), record(7, ''),
+  ];
+  data.markDuplicateRequests(records);
+  assert.deepEqual(records.map(item => item.duplicateTotal), [2, 1, 2, 2, 2, 2, 2]);
+  assert.deepEqual(records.map(item => item.bodyFingerprintIncomplete), [false, false, false, true, true, true, true]);
+  assert.equal(records[0].duplicateGroupId, records[2].duplicateGroupId);
+  assert.notEqual(records[0].duplicateGroupId, records[3].duplicateGroupId);
+
+  const rawOnly = record(8, 'first');
+  delete rawOnly.postData.params;
+  assert.equal(data.getRequestBody(rawOnly), 'file: sample.txt · text/plain');
+  assert(!data.formatCurl(rawOnly).includes('first'));
+});
+
 test.after(() => fs.rmSync(temporary,{recursive:true,force:true}));

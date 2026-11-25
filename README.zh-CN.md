@@ -1,6 +1,6 @@
 # API Copy
 
-当前版本：**0.5.3**。
+当前版本：**0.6.0**。
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
@@ -12,6 +12,7 @@ API Copy 是一个面向接口联调和问题排查的 Chrome DevTools 扩展。
 
 - 按 Chrome Network 的 Fetch/XHR 分类展示 XHR、Fetch 和 EventSource。通过这些方式发起的文件请求也会出现在列表中。
 - 快捷筛选：按 GET、POST 或其他方法筛选，区分 HTTP／业务失败，并支持自定义慢请求阈值。
+- 重复请求警告默认使用 1000 ms 间隔，可在 **设置 → 显示** 中修改。「重复」筛选可查看重复组，悬停或选中请求时联动高亮同组记录。只有文件元数据匹配的上传会标为「可能重复」。
 - 界面自动跟随 Chrome 语言，内置简体中文和英文。
 - 快速复制：
   - **复制路径**：按请求列表显示复制路径，跟随路径前缀截断和 Query 显示设置。
@@ -21,7 +22,8 @@ API Copy 是一个面向接口联调和问题排查的 Chrome DevTools 扩展。
   - **复制 cURL**：按原始 URL、请求头和 Body 生成 POSIX Shell 命令，不受展示截断与 Query 过滤影响；文件上传需替换本地文件占位路径。
   - **复制 Token**：复制 Authorization / Token Header 的完整值，例如 `Bearer eyJ...`。
 - 请求列表 Hover 时显示 3 个高频快捷复制按钮。
-- 列表筛选栏左侧的排序图标切换较早／最新请求在前，按请求开始时间排序；默认正序并记住选择。筛选与方向键跟随当前显示顺序，切换排序保留选中接口和 JSON 展开状态。
+- 通过 DevTools 的 HAR 快照提前展示进行中的请求，完成后更新同一行的状态和响应。快照中无法区分的并发请求在完成时录入。
+- 列表筛选栏左侧的排序图标切换较早／最新请求在前，按请求开始时间编号，筛选和切换方向保留同一请求的序号。默认正序并记住选择，方向键跟随当前显示顺序。
 - 紧凑工作台：请求路径使用 12px、JSON 与参数正文使用 11px 字号，方法和状态使用 9px；显示、过滤与业务规则在侧边设置抽屉中管理。
 - 顶部集中展示所有复制操作；窄窗口自动隐藏文字，仅保留图标与悬浮说明。
 - 响应与 Body 共用无框字段复制按钮，复制成功就地变勾，保持内容位置。
@@ -31,7 +33,7 @@ API Copy 是一个面向接口联调和问题排查的 Chrome DevTools 扩展。
   - `code` 存在且不为 `0` / `200`
 - 过滤设置：默认移除 Query 参数 `_t`，并排除埋点接口 `/jsfulldatasave-be/savedatasfromjs`；支持自行配置多个参数和接口路径。
 - 请求参数：在请求列表旁展示 URL Query、FormData／URL 编码表单，以及 JSON 或原始文本格式的请求 Body。悬停时可复制值或 `字段名: 值`，文件字段以文件名作为复制值。
-- 请求列表展示：支持全局截断路径前缀，并可选择是否展示 URL Query 参数；默认不展示 Query。
+- 请求列表默认保留完整路径。可在全局设置中指定截断段数，并选择是否显示 URL Query 参数。Query 默认隐藏。
 - JSON Preview：
   - 对象字段默认按 A-Z 排序，可切换为原始字段顺序
   - 保留长整数、高精度小数和指数数字，预览与复制均不丢精度
@@ -179,12 +181,12 @@ api-copy-devtools/
 会生成：
 
 ```text
-dist/api-copy-devtools-v0.5.3.zip
+dist/api-copy-devtools-v0.6.0.zip
 ```
 
 ZIP 根目录直接包含 `manifest.json`，可用于 Chrome Web Store 或 Microsoft Edge Add-ons 上传。安装包包含 `src/`、`vendor/` 和第三方许可证，不包含测试代码、大 JSON 样例、截图及商店材料。
 
-0.5.3 商店更新说明见 [发布说明](./store-assets/RELEASE_NOTES.md)。
+0.6.0 商店更新说明见 [发布说明](./store-assets/RELEASE_NOTES.md)。
 
 ## 隐私
 

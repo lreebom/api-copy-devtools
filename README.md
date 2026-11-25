@@ -1,6 +1,6 @@
 # API Copy
 
-Current version: **0.5.3**.
+Current version: **0.6.0**.
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
@@ -16,6 +16,7 @@ In the Network panel, reviewing a full request often means opening requests one 
 
 - Matches Chrome Network's Fetch/XHR category (XHR, Fetch, and EventSource), including requests that return files.
 - Filter by request method, HTTP/business failure, or a configurable slow-request threshold.
+- Detect repeated requests within a configurable interval, 1000 ms by default. Change it in **Settings → Display**. The **Duplicate** filter shows matching groups, and hovering over or selecting a row highlights its peers. Uploads with matching metadata and unavailable file contents are marked as possible duplicates.
 - Automatically follows Chrome's UI language, with English and Simplified Chinese included.
 - Fast copy actions:
   - **Copy Path**: copies the path as shown in the request list, including Query parameters when enabled.
@@ -25,14 +26,15 @@ In the Network panel, reviewing a full request often means opening requests one 
   - **Copy cURL**: generates a POSIX Shell command from the original URL, headers and Body, unaffected by display trimming or Query filtering. Replace file-upload placeholders with local file paths.
   - **Copy Token**: copies the full Authorization / Token header value, such as `Bearer eyJ...`.
 - Shows three high-frequency copy actions when hovering a request row.
-- Toggle the sort icon at the start of the list filter bar to show oldest or newest requests first by start time. Oldest-first is the default; the choice is remembered. Filters and keyboard navigation follow the displayed order without resetting the selected request or JSON view.
+- Show pending requests from DevTools HAR snapshots and update the same row when a request finishes. Concurrent requests that cannot be distinguished in a snapshot are added when they finish.
+- Toggle the sort icon at the start of the list filter bar to show oldest or newest requests first. Request numbers follow start time and are preserved when sorting or filtering. The default is oldest-first, and the choice is remembered.
 - Supports keyboard navigation through requests while the request list has focus.
 - Business failure detection:
   - `isSuccess === false`
   - `code` exists and is not `0` / `200`
 - Configurable filtering: `_t` is removed by default, and `/jsfulldatasave-be/savedatasfromjs` is excluded as a telemetry endpoint.
 - Request parameters: shows URL Query, FormData/URL-encoded forms, and JSON or raw request Bodies beside the request list. On hover, copy a value or a `name: value` pair. For a file field, the copied value is its file name.
-- Request-list display: supports globally trimming leading path segments and optionally showing URL Query parameters; Query parameters are hidden by default.
+- The request list keeps the full path by default. Global settings control prefix trimming and Query visibility. Query parameters are hidden by default.
 - JSON Preview:
   - Sorts object keys A-Z or preserves original field order
   - Preserves long integers, high-precision decimals and exponent numbers when previewing and copying
@@ -175,7 +177,7 @@ Run:
 Output:
 
 ```text
-dist/api-copy-devtools-v0.5.3.zip
+dist/api-copy-devtools-v0.6.0.zip
 ```
 
 The ZIP root contains `manifest.json` directly and can be uploaded to the Chrome Web Store.
@@ -204,4 +206,4 @@ Copy cURL exports the original full URL, headers and Body for a POSIX shell; dis
 
 Feature modules live in src/. Run pure logic checks with node --test tests/request-features.test.cjs; run the browser checks through tests/panel-regression.html on a local static server.
 
-See the [0.5.3 store release notes](./store-assets/RELEASE_NOTES.md). Packages include local runtime modules and third-party licenses, excluding tests, large JSON fixtures, screenshots and store materials.
+See the [0.6.0 store release notes](./store-assets/RELEASE_NOTES.md). Packages include local runtime modules and third-party licenses, excluding tests, large JSON fixtures, screenshots and store materials.

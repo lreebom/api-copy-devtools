@@ -4,6 +4,17 @@
 
 All notable changes to API Copy are documented here.
 
+## 0.6.0 - 2026-11-23
+
+- Add duplicate request warnings, a configurable interval, a quick filter, and group highlighting. Compare available upload file contents and mark matching uploads with incomplete file contents as possible duplicates.
+- Keep concurrent requests as separate records. Distinguish binary responses, pending reads, and evicted bodies from actual response text.
+- Apply a response-body cache budget, defer parsing large JSON responses, and reuse parsed JSON when copying. Preserve existing list rows when new requests arrive.
+- Update light and dark colors, improve badge spacing in narrow panes, and keep field names visible when expanding long JSON strings. Only the selected request row's copy buttons enter the Tab order.
+- Show the current copy target in Preview and flag requests hidden by the active filters. Display HTTP status and business failures separately, with wrapping for failure reasons in narrow panes. Use a light overlay behind Settings and Help to keep the background readable.
+- Preserve requests and the active preview across same-document query, hash, and route changes. Once a document change is confirmed, clear old records and keep requests captured during the check.
+- Show pending requests from HAR snapshots and update their rows as responses arrive. Number requests by start time and preserve the numbers when sorting or filtering.
+- Default global path prefix trimming to 0 segments to keep the full path.
+
 ## 0.5.3 - 2026-11-20
 
 - Copy a value or a `name: value` pair from Query, FormData, and request or response JSON. Array items use their original indexes, including in grouped arrays.
